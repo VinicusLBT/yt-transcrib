@@ -114,7 +114,7 @@ def resumir_transcricao(texto_completo):
     
     try:
         response = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.3-70b-versatile", # Modelo atualizado e mais potente
             messages=[
                 {"role": "system", "content": "Você é um assistente útil que resume vídeos com precisão."},
                 {"role": "user", "content": prompt}
