@@ -4,6 +4,7 @@ import requests
 import os
 import time
 import re
+from youtube_transcript_api import YouTubeTranscriptApi
 
 # Configuração da Página
 st.set_page_config(
@@ -252,46 +253,52 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         subtitle_url += f"&tlang={target_lang}"
                         st.write(f"🌐 Ativando tradução nativa para: {target_lang}...")
 
-                    r = requests.get(subtitle_url, headers=headers)
-                    
-                    if r.status_code != 200:
-                        # Se falhou com tlang, tenta sem tlang (original) e traduz via scraping depois
-                        if "&tlang=" in subtitle_url:
-                            st.write("⚠️ Tradução nativa falhou. Usando tradução alternativa...")
-                            subtitle_url = json3_track['url']
-                            r = requests.get(subtitle_url, headers=headers)
-                        
-                        if r.status_code != 200:
-                            raise Exception(f"YouTube bloqueou o acesso às legendas (Status {r.status_code}). Tente novamente em instantes.")
-
                     try:
-                        data = r.json()
-                    except:
-                        raise Exception("Erro ao processar o formato das legendas do YouTube.")
+                        r = requests.get(subtitle_url, headers=headers, timeout=10)
+                        
+                        if r.status_code == 429 or r.status_code != 200:
+                            # ERRO 429 ou Geral -> TENTA FALLBACK IMEDIATO COM YouTubeTranscriptApi
+                            st.write("🔄 YouTube bloqueou acesso direto. Tentando canais secundários...")
+                            raise Exception("429_OR_ERROR")
 
-                    for event in data.get('events', []):
-                        if 'segs' not in event: continue
-                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                        if not text_seg: continue
-                        
-                        start = event.get('tStartMs', 0) / 1000.0
-                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                        
-                        full_transcript.append({'timestamp': timestamp, 'text': text_seg})
-                        transcript_text += text_seg + " "
-                    
-                    # Se pegamos a legenda original porque a nativa falhou, traduzimos agora via scraping
-                    # Ou se o usuário escolher um idioma e não usamos tlang por algum motivo
-                    current_sub_lang = target_sub_lang.split('-')[0]
-                    if target_lang != current_sub_lang and "&tlang=" not in subtitle_url:
-                        st.write(f"🌐 Traduzindo texto (Via Fallback: {target_lang})...")
-                        transcript_text = translate_text(transcript_text, target_lang)
-                        # Nota: Traduzir timestamps um por um pode ser lento, focamos no texto principal primeiro
-                        # Mas para manter o UX, vamos traduzir os chunks do full_transcript também
-                        for entry in full_transcript:
-                            entry['text'] = translate_text(entry['text'], target_lang)
-                    
-                    success = True
+                        data = r.json()
+                        for event in data.get('events', []):
+                            if 'segs' not in event: continue
+                            text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                            if not text_seg: continue
+                            start = event.get('tStartMs', 0) / 1000.0
+                            timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                            full_transcript.append({'timestamp': timestamp, 'text': text_seg})
+                            transcript_text += text_seg + " "
+                        success = True
+
+                    except Exception as e:
+                        # FALLBACK COM YouTubeTranscriptApi
+                        try:
+                            st.write("📡 Conectando via canais alternativos...")
+                            # Tenta pegar a legenda no idioma alvo ou original e traduzir
+                            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                            
+                            try:
+                                # Tenta pegar direto no idioma alvo
+                                t_obj = transcript_list.find_transcript([target_lang])
+                            except:
+                                # Se não tiver, pega o original e traduz via API da biblioteca
+                                t_obj = transcript_list.find_generated_transcript(['pt', 'en'])
+                                if target_lang != t_obj.language_code:
+                                    t_obj = t_obj.translate(target_lang)
+                            
+                            data = t_obj.fetch()
+                            for entry in data:
+                                text_seg = entry['text']
+                                start = entry['start']
+                                timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                                full_transcript.append({'timestamp': timestamp, 'text': text_seg})
+                                transcript_text += text_seg + " "
+                            success = True
+                        except Exception as inner_e:
+                            raise Exception(f"YouTube bloqueou todas as tentativas (Status 429). Tente novamente em alguns minutos ou use outro vídeo.")
+
 
                 status.update(label="Concluido!", state="complete", expanded=False)
             
