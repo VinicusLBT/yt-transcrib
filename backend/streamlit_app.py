@@ -276,6 +276,7 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             if "&tlang=" in subtitle_url:
                                 try:
                                     st.write("⚠️ Tradução nativa bloqueada. Tentando buscar original e traduzir via Google...")
+                                    time.sleep(2) # Espera 2s para o YouTube esfriar
                                     subtitle_url = json3_track['url'] # URL limpa sem tlang
                                     r = requests.get(subtitle_url, headers=headers, timeout=10)
                                     if r.status_code == 200:
@@ -313,19 +314,23 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
                             
                             try:
-                                # Tenta pegar direto no idioma alvo
-                                t_obj = transcript_list.find_transcript([target_lang])
+                                # Tenta pegar qualquer transcript disponível (preferência original)
+                                t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
+                                # NÃO pedir t_obj.translate(target_lang) pois isso causa 429 no YouTube
                             except:
-                                # Se não tiver, pega o original e traduz via API da biblioteca
-                                t_obj = transcript_list.find_generated_transcript(['pt', 'en'])
-                                if target_lang != t_obj.language_code:
-                                    t_obj = t_obj.translate(target_lang)
+                                # Se não achar gerado, pega o primeiro da lista
+                                t_obj = list(transcript_list._generated_transcripts.values())[0]
                             
                             data = t_obj.fetch()
                             for entry in data:
                                 text_seg = entry['text']
                                 start = entry['start']
                                 timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                                
+                                # Traduzir manualmente aqui também
+                                if target_lang != "original":
+                                    text_seg = translate_text(text_seg, target_lang)
+
                                 full_transcript.append({'timestamp': timestamp, 'text': text_seg})
                                 transcript_text += text_seg + " "
                             success = True
