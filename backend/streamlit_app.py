@@ -13,12 +13,14 @@ st.set_page_config(
 )
 
 # Meta Tags para tentar forçar o nome no Mobile (Best Effort)
-st.markdown("""
     <head>
         <meta name="application-name" content="YT Transcrib">
         <meta name="apple-mobile-web-app-title" content="YT Transcrib">
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="mobile-web-app-capable" content="yes">
+        <!-- Ícone para Mobile (SVG Data URI) -->
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
+        <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
     </head>
 """, unsafe_allow_html=True)
 
