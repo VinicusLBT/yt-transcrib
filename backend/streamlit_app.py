@@ -162,15 +162,27 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                 
                 tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
                 
+                tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
+                
                 with tab1:
-                    # Usando st.code para ganhar o botão de copiar nativo
-                    st.code(transcript_text, language="text")
-                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt")
+                    # Texto corrido com quebra de linha correta e altura fixa para leitura confortável
+                    st.text_area(
+                        label="Conteúdo da Transcrição",
+                        value=transcript_text,
+                        height=400,
+                        label_visibility="collapsed"
+                    )
+                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
                 
                 with tab2:
                     timestamped_text = "\n".join(full_transcript)
-                    st.code(timestamped_text, language="text")
-                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt")
+                    st.text_area(
+                        label="Conteúdo com Tempo",
+                        value=timestamped_text,
+                        height=400,
+                        label_visibility="collapsed"
+                    )
+                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
 
             except Exception as e:
                 status.update(label="Erro", state="error", expanded=False)
