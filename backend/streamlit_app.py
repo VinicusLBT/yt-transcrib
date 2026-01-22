@@ -98,20 +98,20 @@ def translate_text(text, target_lang):
     if not text or target_lang == "original":
         return text
     try:
+        # Google Translate aceita textos bem maiores - traduz tudo de uma vez
+        # Usando a API web do Google Translate (não a paga)
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
             'client': 'gtx',
-            'sl': 'auto',
+            'sl': 'auto',  # auto-detect source
             'tl': target_lang,
             'dt': 't',
-            'q': text[:5000]
+            'q': text[:5000]  # Limite seguro
         }
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response = requests.get(url, params=params, timeout=10)
         if response.ok:
             result = response.json()
+            # Extrair texto traduzido do resultado
             translated_parts = []
             if result and result[0]:
                 for part in result[0]:
@@ -120,7 +120,8 @@ def translate_text(text, target_lang):
             translated = ''.join(translated_parts)
             return translated if translated else text
         return text
-    except Exception:
+    except Exception as e:
+        # Fallback silencioso para o texto original
         return text
 
 # Título e Cabeçalho
@@ -171,100 +172,149 @@ if st.button("Transcrever Vídeo", use_container_width=True):
     else:
         with st.status("Processando...", expanded=True) as status:
             try:
+                st.write("🔍 Conectando ao YouTube (Modo Seguro)...")
+                
+                # Configurar Cookies
+                cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
+                cookie_file = "cookies.txt"
+                if cookies_content:
+                    with open(cookie_file, "w") as f:
+                        f.write(cookies_content)
+                
+                # Headers e Opções do yt-dlp
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.youtube.com/',
+                }
+                
+                ydl_opts = {
+                    'skip_download': True,
+                    'writesubtitles': True,
+                    'writeautomaticsub': True,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
+                    'user_agent': headers['User-Agent'],
+                }
+
                 # Variáveis de controle
                 success = False
                 transcript_text = ""
                 full_transcript = []
 
-                # Início do Processamento Simplificado
-                data = None
-                
-                # Passo 1: Obter Legenda Original (Prioridade Máxima)
-                st.write("📡 Buscando legendas originais...")
-                try:
-                    # Tentativa com API mais rápida
-                    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    subs = info.get('automatic_captions') or info.get('subtitles')
+                    
+                    if not subs:
+                        raise Exception("Nenhuma legenda encontrada para este vídeo.")
+                    
+                    # Buscar legenda no idioma escolhido pelo usuário
+                    target_sub_lang = None
+                    
+                    # 1. Tenta exato (ex: "pt" ou "en")
+                    if target_lang in subs:
+                        target_sub_lang = target_lang
+                    
+                    # 2. Tenta variações (pt-BR, en-US, etc)
+                    if not target_sub_lang:
+                        for code in subs.keys():
+                            if code.startswith(target_lang):
+                                target_sub_lang = code
+                                break
+                    
+                    # 3. Fallback: pega qualquer idioma disponível
+                    if not target_sub_lang:
+                        fallback_priority = ['pt', 'en', 'es', 'fr']
+                        for p in fallback_priority:
+                            for code in subs.keys():
+                                if code.startswith(p):
+                                    target_sub_lang = code
+                                    break
+                            if target_sub_lang:
+                                break
+                    
+                    if not target_sub_lang:
+                        target_sub_lang = list(subs.keys())[0]
+
+                    st.write(f"📝 Obtendo legendas (Base: {target_sub_lang})...")
+                    
+                    sub_tracks = subs[target_sub_lang]
+                    json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
+                    
+                    if not json3_track:
+                        # Tenta pegar qualquer formato se json3 falhar
+                        json3_track = sub_tracks[0]
+
+                    subtitle_url = json3_track['url']
+                    
+                    # Sempre buscamos a legenda original primeiro (mais estável)
+                    st.write(f"📝 Obtendo legendas originais: {target_sub_lang}...")
+                    subtitle_url = json3_track['url']
+
                     try:
-                        t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
-                    except:
-                        t_obj = next(iter(transcript_list._generated_transcripts.values()))
-                    
-                    data_raw = t_obj.fetch()
-                    data = {'events': []}
-                    for entry in data_raw:
-                        data['events'].append({
-                            'tStartMs': entry['start'] * 1000,
-                            'segs': [{'utf8': entry['text']}]
-                        })
-                except Exception:
-                    # Fallback com yt-dlp
-                    try:
-                        ydl_opts = {'skip_download': True, 'quiet': True}
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            info = ydl.extract_info(url, download=False)
-                            subs = info.get('automatic_captions') or info.get('subtitles')
-                            if subs:
-                                first_key = next(iter(subs.keys()))
-                                sub_url = next((t for t in subs[first_key] if t.get('ext') == 'json3'), subs[first_key][0])['url']
-                                r = requests.get(sub_url, timeout=10)
-                                if r.status_code == 200: data = r.json()
-                    except: pass
-
-                if not data:
-                    raise Exception("Não foi possível obter nenhuma legenda para este vídeo. Verifique se ele possui legendas disponíveis.")
-
-                # Passo 2: Processar texto base
-                st.write("📝 Processando texto original...")
-                temp_events = []
-                for event in data.get('events', []):
-                    if 'segs' not in event: continue
-                    text = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                    if text:
-                        start = event.get('tStartMs', 0) / 1000.0
-                        temp_events.append({'timestamp': time.strftime('%H:%M:%S', time.gmtime(start)), 'text': text})
-                
-                full_transcript = temp_events
-                transcript_text = " ".join([e['text'] for e in full_transcript])
-
-                # Passo 3: Tradução com Barra de Progresso
-                if target_lang != "original":
-                    st.write(f"🌐 Iniciando tradução para {selected_lang_name}...")
-                    
-                    # Barra de progresso visível
-                    progress_bar = st.progress(0, text="Preparando tradução...")
-                    
-                    # 3.1. Traduzir o texto corrido (em blocos de 4500 chars)
-                    chunks = [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]
-                    total_steps = len(chunks) + (len(full_transcript) // 40) + 1
-                    current_step = 0
-                    
-                    new_transcript_text = ""
-                    for i, chunk in enumerate(chunks):
-                        current_step += 1
-                        pct = int((current_step / total_steps) * 100)
-                        progress_bar.progress(pct, text=f"Traduzindo texto principal... {pct}%")
-                        new_transcript_text += translate_text(chunk, target_lang) + " "
-                    transcript_text = new_transcript_text.strip()
-
-                    # 3.2. Traduzir timestamps em blocos (otimizado)
-                    batch_size = 40
-                    for i in range(0, len(full_transcript), batch_size):
-                        current_step += 1
-                        pct = int((current_step / total_steps) * 100)
-                        progress_bar.progress(pct, text=f"Traduzindo blocos de tempo... {pct}%")
+                        # TENTATIVA 1: Busca Direta (Original)
+                        r = requests.get(subtitle_url, headers=headers, timeout=10)
+                        if r.status_code != 200:
+                             raise Exception("FETCH_FAILED")
+                        data = r.json()
                         
-                        batch = full_transcript[i:i+batch_size]
-                        combined = " ||| ".join([item['text'] for item in batch])
-                        translated = translate_text(combined, target_lang).split("|||")
-                        for j, item in enumerate(batch):
-                            if j < len(translated):
-                                item['text'] = translated[j].strip()
+                    except Exception as e:
+                        # FALLBACK COM YouTubeTranscriptApi
+                        try:
+                            st.write("📡 Conectando via canais alternativos...")
+                            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                            t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
+                            data_raw = t_obj.fetch()
+                            # Converter formato do YouTubeTranscriptApi para o nosso formato JSON3
+                            data = {'events': []}
+                            for entry in data_raw:
+                                data['events'].append({
+                                    'tStartMs': entry['start'] * 1000,
+                                    'segs': [{'utf8': entry['text']}]
+                                })
+                        except Exception as inner_e:
+                            raise Exception(f"Bloqueio total do YouTube (Erro 429). Tente novamente em instantes.")
+
+                    # Processamento dos dados originais
+                    temp_full_text = []
+                    for event in data.get('events', []):
+                        if 'segs' not in event: continue
+                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                        if not text_seg: continue
+                        start = event.get('tStartMs', 0) / 1000.0
+                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                        full_transcript.append({'timestamp': timestamp, 'text': text_seg, 'original': text_seg})
+                        temp_full_text.append(text_seg)
                     
-                    progress_bar.progress(100, text="Tradução concluída!")
-                    time.sleep(0.5)
-                    progress_bar.empty()
-                
-                success = True
+                    transcript_text = " ".join(temp_full_text)
+
+                    # TRADUÇÃO EM LOTE (BATCH) - Muito mais rápido e evita 429 do Google
+                    if target_lang != target_sub_lang.split('-')[0] and target_lang != "original":
+                        st.write(f"🌐 Traduzindo para {selected_lang_name} (Lote)...")
+                        
+                        # 1. Traduzir o texto corrido (até 5000 chars por vez)
+                        translated_text = ""
+                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
+                            translated_text += translate_text(chunk, target_lang) + " "
+                        transcript_text = translated_text.strip()
+
+                        # 2. Traduzir os itens do timestamp em blocos para ser rápido
+                        # Agrupamos 30 linhas por vez para traduzir num único request
+                        batch_size = 30
+                        for i in range(0, len(full_transcript), batch_size):
+                            batch = full_transcript[i:i+batch_size]
+                            batch_texts = [item['text'] for item in batch]
+                            # Usamos um delimitador que o tradutor costuma ignorar ou manter
+                            combined = " ||| ".join(batch_texts)
+                            translated_combined = translate_text(combined, target_lang)
+                            translated_list = translated_combined.split("|||")
+                            
+                            for j, item in enumerate(batch):
+                                if j < len(translated_list):
+                                    item['text'] = translated_list[j].strip()
+                    
+                    success = True
                 status.update(label="Concluido!", state="complete", expanded=False)
             
             except Exception as e:
