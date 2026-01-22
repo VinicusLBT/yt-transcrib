@@ -102,13 +102,38 @@ def fetch_original_transcript(video_id):
             data = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en', 'es', 'fr'], cookies=c_path)
             return data, "auto"
             
-    except Exception as e:
-        # Tenta o método mais básico possível sem filtros se tudo falhar
+    except Exception as e_main:
+        # FALLBACK FINAL: Tenta usar yt-dlp se a biblioteca principal falhar
         try:
-            data = YouTubeTranscriptApi.get_transcript(video_id)
-            return data, "auto"
-        except Exception as e2:
-            return None, str(e)
+            ydl_opts = {
+                'skip_download': True,
+                'writesubtitles': True,
+                'writeautomaticsub': True,
+                'quiet': True,
+                'cookiefile': c_path,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                subs = info.get('automatic_captions') or info.get('subtitles')
+                if not subs: return None, "No subs found"
+                
+                # Pega a primeira legenda disponível
+                first_lang = next(iter(subs))
+                sub_url = subs[first_lang][-1]['url'] # pega json3 ou o ultimo formato
+                
+                r = requests.get(sub_url)
+                if r.status_code == 200:
+                    data = r.json()
+                    # Normaliza para o formato esperado
+                    final_data = []
+                    for event in data.get('events', []):
+                         if 'segs' in event:
+                             text = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                             if text:
+                                 final_data.append({'text': text, 'start': event.get('tStartMs', 0)/1000.0})
+                    return final_data, first_lang
+        except Exception as e_dlp:
+            return None, f"Erro Fatal: {str(e_main)} | DLP: {str(e_dlp)}"
 
 def translate_internally(texto_completo, target_lang):
     """
