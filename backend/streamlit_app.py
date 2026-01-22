@@ -147,47 +147,77 @@ if st.button("🚀 Transcrever Vídeo", use_container_width=True):
             try:
                 st.write("🔍 Conectando ao YouTube...")
                 
-                # Configurar Cookies se existirem
+                # 1. Configurar Cookies e Headers
                 cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
                 cookie_file = "cookies.txt"
                 if cookies_content and not os.path.exists(cookie_file):
                     with open(cookie_file, "w") as f:
                         f.write(cookies_content)
                 
-                # Tenta baixar a legenda original (Método mais estável)
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Referer': 'https://www.youtube.com/',
+                }
+
+                # 2. TENTATIVA 1: yt-dlp (Método mais robusto)
                 data = None
                 try:
-                    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=cookie_file if os.path.exists(cookie_file) else None)
-                    # Tenta qualquer idioma disponível, priorizando PT/EN
-                    try:
-                        t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
-                    except:
-                        t_obj = next(iter(transcript_list))
+                    st.write("📡 Conectando ao YouTube (Primário)...")
+                    ydl_opts = {
+                        'skip_download': True,
+                        'writesubtitles': True,
+                        'writeautomaticsub': True,
+                        'quiet': True,
+                        'no_warnings': True,
+                        'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
+                        'user_agent': headers['User-Agent'],
+                    }
                     
-                    raw_data = t_obj.fetch()
-                    data = {'events': []}
-                    for entry in raw_data:
-                        data['events'].append({
-                            'tStartMs': entry['start'] * 1000,
-                            'segs': [{'utf8': entry['text']}]
-                        })
-                except Exception as e_api:
-                    st.write("⚠️ Método 1 falhou. Tentando backup...")
-                    # Fallback com yt-dlp
-                    ydl_opts = {'skip_download': True, 'quiet': True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(url, download=False)
                         subs = info.get('automatic_captions') or info.get('subtitles')
+                        
                         if subs:
-                            first_key = next(iter(subs.keys()))
-                            sub_url = next((t for t in subs[first_key] if t.get('ext') == 'json3'), subs[first_key][0])['url']
-                            r = requests.get(sub_url, timeout=10)
-                            if r.status_code == 200: data = r.json()
+                            # Tenta pegar qualquer idioma disponível (prioridade PT, depois EN)
+                            target_sub_lang = 'pt' if 'pt' in subs else ('en' if 'en' in subs else next(iter(subs.keys())))
+                            sub_tracks = subs[target_sub_lang]
+                            json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), sub_tracks[0])
+                            
+                            r = requests.get(json3_track['url'], headers=headers, timeout=10)
+                            if r.status_code == 200:
+                                data = r.json()
+                                st.write(f"✅ Legendas obtidas (Base: {target_sub_lang})")
+                except Exception as e_dlp:
+                    st.write(f"⚠️ Método primário falhou. Tentando backup...")
+
+                # 3. TENTATIVA 2: YouTubeTranscriptApi (Backup)
+                if not data:
+                    try:
+                        st.write("📡 Conectando via canais alternativos...")
+                        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=cookie_file if os.path.exists(cookie_file) else None)
+                        
+                        # Tenta PT, depois EN, depois qualquer uma
+                        try:
+                            t_obj = transcript_list.find_transcript(['pt', 'en'])
+                        except:
+                            t_obj = next(iter(transcript_list))
+                        
+                        raw_data = t_obj.fetch()
+                        data = {'events': []}
+                        for entry in raw_data:
+                            data['events'].append({
+                                'tStartMs': entry['start'] * 1000,
+                                'segs': [{'utf8': entry['text']}]
+                            })
+                        st.write(f"✅ Legendas obtidas via backup ({t_obj.language_code})")
+                    except Exception as e_api:
+                         raise Exception("Não foi possível obter legendas. O YouTube pode estar bloqueando o acesso temporariamente (Erro 429).")
 
                 if not data:
-                    raise Exception("Não foi possível obter nenhuma legenda para este vídeo.")
+                    raise Exception("Nenhuma legenda encontrada para este vídeo.")
 
-                # Processamento do texto
+                # 4. Processamento do texto
                 st.write("📝 Organizando transcrição...")
                 full_transcript = []
                 temp_text = []
