@@ -13,6 +13,7 @@ st.set_page_config(
 )
 
 # Meta Tags para tentar forçar o nome no Mobile (Best Effort)
+st.markdown("""
     <head>
         <meta name="application-name" content="YT Transcrib">
         <meta name="apple-mobile-web-app-title" content="YT Transcrib">
