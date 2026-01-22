@@ -160,28 +160,20 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                 st.success("Transcrição realizada com sucesso!")
                 st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
                 
-                tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
+                import textwrap
                 
                 tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
                 
                 with tab1:
-                    # Texto corrido com quebra de linha correta e altura fixa para leitura confortável
-                    st.text_area(
-                        label="Conteúdo da Transcrição",
-                        value=transcript_text,
-                        height=400,
-                        label_visibility="collapsed"
-                    )
+                    # Usando st.code para ter o botão de copiar nativo
+                    # Truque: Quebrar o texto manualmente para simular word-wrap no st.code
+                    wrapped_text = textwrap.fill(transcript_text, width=80) 
+                    st.code(wrapped_text, language="text")
                     st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
                 
                 with tab2:
                     timestamped_text = "\n".join(full_transcript)
-                    st.text_area(
-                        label="Conteúdo com Tempo",
-                        value=timestamped_text,
-                        height=400,
-                        label_visibility="collapsed"
-                    )
+                    st.code(timestamped_text, language="text")
                     st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
 
             except Exception as e:
