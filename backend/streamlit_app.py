@@ -248,96 +248,73 @@ if st.button("Transcrever Vídeo", use_container_width=True):
 
                     subtitle_url = json3_track['url']
                     
-                    # Se o idioma escolhido for diferente do idioma base, usa tradução nativa do YouTube
-                    if target_lang != target_sub_lang.split('-')[0]:
-                        subtitle_url += f"&tlang={target_lang}"
-                        st.write(f"🌐 Ativando tradução nativa para: {target_lang}...")
+                    # Sempre buscamos a legenda original primeiro (mais estável)
+                    st.write(f"📝 Obtendo legendas originais: {target_sub_lang}...")
+                    subtitle_url = json3_track['url']
 
                     try:
-                         # Variável para controlar se precisamos traduzir manualmente
-                        manual_translation_needed = False
+                        # TENTATIVA 1: Busca Direta (Original)
+                        r = requests.get(subtitle_url, headers=headers, timeout=10)
+                        if r.status_code != 200:
+                             raise Exception("FETCH_FAILED")
+                        data = r.json()
                         
-                        try:
-                            # TENTATIVA 1: Legenda Nativa (pode incluir &tlang=)
-                            r = requests.get(subtitle_url, headers=headers, timeout=10)
-                            
-                            # Se falhou E estavamos tentando traduzir -> Forçar erro
-                            if r.status_code != 200 and "&tlang=" in subtitle_url:
-                                raise Exception("NATIVE_TRANSLATION_FAILED")
-                                
-                            # Se falhou mas era original -> Erro grave
-                            if r.status_code != 200:
-                                 raise Exception("FETCH_FAILED")
-
-                            data = r.json()
-                            
-                        except Exception as e:
-                            # TENTATIVA 2: Fallback para Original + Tradução Manual
-                            if "&tlang=" in subtitle_url:
-                                try:
-                                    st.write("⚠️ Tradução nativa bloqueada. Tentando buscar original e traduzir via Google...")
-                                    time.sleep(2) # Espera 2s para o YouTube esfriar
-                                    subtitle_url = json3_track['url'] # URL limpa sem tlang
-                                    r = requests.get(subtitle_url, headers=headers, timeout=10)
-                                    if r.status_code == 200:
-                                        data = r.json()
-                                        manual_translation_needed = True 
-                                    else:
-                                        raise Exception("ORIGINAL_FETCH_FAILED")
-                                except:
-                                    raise Exception("ALL_REQUESTS_FAILED")
-                            else:
-                                raise e
-
-                        # Processamento dos dados
-                        for event in data.get('events', []):
-                            if 'segs' not in event: continue
-                            text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                            if not text_seg: continue
-                            start = event.get('tStartMs', 0) / 1000.0
-                            timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                            
-                            if manual_translation_needed and target_lang != "original":
-                                text_seg = translate_text(text_seg, target_lang)
-                                
-                            full_transcript.append({'timestamp': timestamp, 'text': text_seg})
-                            transcript_text += text_seg + " "
-                            
-                        success = True
-
-                    except Exception as e_main:
-
+                    except Exception as e:
                         # FALLBACK COM YouTubeTranscriptApi
                         try:
                             st.write("📡 Conectando via canais alternativos...")
-                            # Tenta pegar a legenda no idioma alvo ou original e traduzir
                             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                            
-                            try:
-                                # Tenta pegar qualquer transcript disponível (preferência original)
-                                t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
-                                # NÃO pedir t_obj.translate(target_lang) pois isso causa 429 no YouTube
-                            except:
-                                # Se não achar gerado, pega o primeiro da lista
-                                t_obj = list(transcript_list._generated_transcripts.values())[0]
-                            
-                            data = t_obj.fetch()
-                            for entry in data:
-                                text_seg = entry['text']
-                                start = entry['start']
-                                timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                                
-                                # Traduzir manualmente aqui também
-                                if target_lang != "original":
-                                    text_seg = translate_text(text_seg, target_lang)
-
-                                full_transcript.append({'timestamp': timestamp, 'text': text_seg})
-                                transcript_text += text_seg + " "
-                            success = True
+                            t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
+                            data_raw = t_obj.fetch()
+                            # Converter formato do YouTubeTranscriptApi para o nosso formato JSON3
+                            data = {'events': []}
+                            for entry in data_raw:
+                                data['events'].append({
+                                    'tStartMs': entry['start'] * 1000,
+                                    'segs': [{'utf8': entry['text']}]
+                                })
                         except Exception as inner_e:
-                            raise Exception(f"YouTube bloqueou todas as tentativas (Status 429). Tente novamente em alguns minutos ou use outro vídeo.")
+                            raise Exception(f"Bloqueio total do YouTube (Erro 429). Tente novamente em instantes.")
 
+                    # Processamento dos dados originais
+                    temp_full_text = []
+                    for event in data.get('events', []):
+                        if 'segs' not in event: continue
+                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                        if not text_seg: continue
+                        start = event.get('tStartMs', 0) / 1000.0
+                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                        full_transcript.append({'timestamp': timestamp, 'text': text_seg, 'original': text_seg})
+                        temp_full_text.append(text_seg)
+                    
+                    transcript_text = " ".join(temp_full_text)
 
+                    # TRADUÇÃO EM LOTE (BATCH) - Muito mais rápido e evita 429 do Google
+                    if target_lang != target_sub_lang.split('-')[0] and target_lang != "original":
+                        st.write(f"🌐 Traduzindo para {selected_lang_name} (Lote)...")
+                        
+                        # 1. Traduzir o texto corrido (até 5000 chars por vez)
+                        translated_text = ""
+                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
+                            translated_text += translate_text(chunk, target_lang) + " "
+                        transcript_text = translated_text.strip()
+
+                        # 2. Traduzir os itens do timestamp em blocos para ser rápido
+                        # Agrupamos 30 linhas por vez para traduzir num único request
+                        batch_size = 30
+                        for i in range(0, len(full_transcript), batch_size):
+                            batch = full_transcript[i:i+batch_size]
+                            batch_texts = [item['text'] for item in batch]
+                            # Usamos um delimitador que o tradutor costuma ignorar ou manter
+                            combined = " ||| ".join(batch_texts)
+                            translated_combined = translate_text(combined, target_lang)
+                            translated_list = translated_combined.split("|||")
+                            
+                            for j, item in enumerate(batch):
+                                if j < len(translated_list):
+                                    item['text'] = translated_list[j].strip()
+                    
+                    success = True
                 status.update(label="Concluido!", state="complete", expanded=False)
             
             except Exception as e:
