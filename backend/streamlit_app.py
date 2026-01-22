@@ -176,106 +176,95 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                 transcript_text = ""
                 full_transcript = []
 
-                # Início do Processamento Estruturado
+                # Início do Processamento Simplificado
                 data = None
                 
-                # METODO 1: YouTubeTranscriptApi (Mais estável e rápido)
+                # Passo 1: Obter Legenda Original (Prioridade Máxima)
+                st.write("📡 Buscando legendas originais...")
                 try:
-                    st.write("📡 Conectando ao serviço de transcrição (Método 1)...")
+                    # Tentativa com API mais rápida
                     transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                    
-                    # Tenta qualquer legenda disponível (preferência para PT ou EN)
                     try:
                         t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
                     except:
-                        # Pega a primeira que encontrar se não tiver as preferidas
                         t_obj = next(iter(transcript_list._generated_transcripts.values()))
                     
                     data_raw = t_obj.fetch()
-                    # Normalizar para o nosso formato processável
                     data = {'events': []}
                     for entry in data_raw:
                         data['events'].append({
                             'tStartMs': entry['start'] * 1000,
                             'segs': [{'utf8': entry['text']}]
                         })
-                    st.write("✅ Legendas obtidas via Método 1.")
                 except Exception:
-                    st.write("⚠️ Método 1 falhou. Tentando Método 2 (Backup)...")
-                    
-                    # METODO 2: yt-dlp + requests (Fallback Robusto)
+                    # Fallback com yt-dlp
                     try:
-                        # Configurar Cookies se existirem
-                        cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
-                        cookie_file = "cookies.txt"
-                        if cookies_content:
-                            with open(cookie_file, "w") as f: f.write(cookies_content)
-                        
-                        ydl_opts = {
-                            'skip_download': True, 'writesubtitles': True, 'writeautomaticsub': True,
-                            'quiet': True, 'no_warnings': True,
-                            'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
-                        }
-                        
+                        ydl_opts = {'skip_download': True, 'quiet': True}
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             info = ydl.extract_info(url, download=False)
                             subs = info.get('automatic_captions') or info.get('subtitles')
-                            if not subs: raise Exception("Subs not found")
-                            
-                            # Pega qualquer idioma de legenda disponível para extrair a URL JSON3
-                            first_sub_key = next(iter(subs.keys()))
-                            sub_tracks = subs[first_sub_key]
-                            json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), sub_tracks[0])
-                            
-                            r = requests.get(json3_track['url'], timeout=10)
-                            if r.status_code == 200:
-                                data = r.json()
-                                st.write("✅ Legendas obtidas via Método 2.")
-                            else:
-                                raise Exception("Requests 429")
-                    except Exception:
-                        raise Exception("Bloqueio total do YouTube. O IP deste servidor foi temporariamente restringido (Erro 429).")
+                            if subs:
+                                first_key = next(iter(subs.keys()))
+                                sub_url = next((t for t in subs[first_key] if t.get('ext') == 'json3'), subs[first_key][0])['url']
+                                r = requests.get(sub_url, timeout=10)
+                                if r.status_code == 200: data = r.json()
+                    except: pass
 
-                # PROCESSAMENTO COMUM DOS DADOS OBTIDOS
-                if data:
-                    temp_full_text = []
-                    for event in data.get('events', []):
-                        if 'segs' not in event: continue
-                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                        if not text_seg: continue
+                if not data:
+                    raise Exception("Não foi possível obter nenhuma legenda para este vídeo. Verifique se ele possui legendas disponíveis.")
+
+                # Passo 2: Processar texto base
+                st.write("📝 Processando texto original...")
+                temp_events = []
+                for event in data.get('events', []):
+                    if 'segs' not in event: continue
+                    text = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                    if text:
                         start = event.get('tStartMs', 0) / 1000.0
-                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                        full_transcript.append({'timestamp': timestamp, 'text': text_seg})
-                        temp_full_text.append(text_seg)
-                    
-                    transcript_text = " ".join(temp_full_text)
+                        temp_events.append({'timestamp': time.strftime('%H:%M:%S', time.gmtime(start)), 'text': text})
+                
+                full_transcript = temp_events
+                transcript_text = " ".join([e['text'] for e in full_transcript])
 
-                    # TRADUÇÃO EM LOTE SE NECESSÁRIO
-                    # Identificamos se precisamos traduzir (se o target_lang não for o original do vídeo)
-                    if target_lang != "original":
-                        # Simplificação: se o usuário escolheu algo diferente do 'original', traduzimos
-                        # Para maior precisão, poderíamos checar o idioma base, mas carregar o tradutor é seguro
-                        st.write(f"🌐 Preparando tradução para {selected_lang_name}...")
+                # Passo 3: Tradução com Barra de Progresso
+                if target_lang != "original":
+                    st.write(f"🌐 Iniciando tradução para {selected_lang_name}...")
+                    
+                    # Barra de progresso visível
+                    progress_bar = st.progress(0, text="Preparando tradução...")
+                    
+                    # 3.1. Traduzir o texto corrido (em blocos de 4500 chars)
+                    chunks = [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]
+                    total_steps = len(chunks) + (len(full_transcript) // 40) + 1
+                    current_step = 0
+                    
+                    new_transcript_text = ""
+                    for i, chunk in enumerate(chunks):
+                        current_step += 1
+                        pct = int((current_step / total_steps) * 100)
+                        progress_bar.progress(pct, text=f"Traduzindo texto principal... {pct}%")
+                        new_transcript_text += translate_text(chunk, target_lang) + " "
+                    transcript_text = new_transcript_text.strip()
+
+                    # 3.2. Traduzir timestamps em blocos (otimizado)
+                    batch_size = 40
+                    for i in range(0, len(full_transcript), batch_size):
+                        current_step += 1
+                        pct = int((current_step / total_steps) * 100)
+                        progress_bar.progress(pct, text=f"Traduzindo blocos de tempo... {pct}%")
                         
-                        # 1. Traduzir o texto corrido
-                        translated_text = ""
-                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
-                            translated_text += translate_text(chunk, target_lang) + " "
-                        transcript_text = translated_text.strip()
-
-                        # 2. Traduzir timestamps em blocos (otimizado)
-                        batch_size = 40
-                        for i in range(0, len(full_transcript), batch_size):
-                            batch = full_transcript[i:i+batch_size]
-                            batch_texts = [item['text'] for item in batch]
-                            combined = " ||| ".join(batch_texts)
-                            translated_combined = translate_text(combined, target_lang)
-                            translated_list = translated_combined.split("|||")
-                            for j, item in enumerate(batch):
-                                if j < len(translated_list):
-                                    item['text'] = translated_list[j].strip()
+                        batch = full_transcript[i:i+batch_size]
+                        combined = " ||| ".join([item['text'] for item in batch])
+                        translated = translate_text(combined, target_lang).split("|||")
+                        for j, item in enumerate(batch):
+                            if j < len(translated):
+                                item['text'] = translated[j].strip()
                     
-                    success = True
+                    progress_bar.progress(100, text="Tradução concluída!")
+                    time.sleep(0.5)
+                    progress_bar.empty()
+                
+                success = True
                 status.update(label="Concluido!", state="complete", expanded=False)
             
             except Exception as e:
