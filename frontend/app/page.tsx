@@ -20,11 +20,15 @@ export default function Home() {
     setTranscript(null);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/transcript`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, language }),
+      const apiUrl = 'https://vinicuslbt-yt-transcrib-backendstreamlit-app-qpexzj.streamlit.app';
+
+      // Streamlit requer a URL passada como query param
+      const response = await fetch(`${apiUrl}/?url=${encodeURIComponent(url)}&lang=${language}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
       });
 
       if (!response.ok) {
