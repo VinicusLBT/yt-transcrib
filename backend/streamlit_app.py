@@ -253,7 +253,21 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         st.write(f"🌐 Ativando tradução nativa para: {target_lang}...")
 
                     r = requests.get(subtitle_url, headers=headers)
-                    data = r.json()
+                    
+                    if r.status_code != 200:
+                        # Se falhou com tlang, tenta sem tlang (original) e traduz via scraping depois
+                        if "&tlang=" in subtitle_url:
+                            st.write("⚠️ Tradução nativa falhou. Usando tradução alternativa...")
+                            subtitle_url = json3_track['url']
+                            r = requests.get(subtitle_url, headers=headers)
+                        
+                        if r.status_code != 200:
+                            raise Exception(f"YouTube bloqueou o acesso às legendas (Status {r.status_code}). Tente novamente em instantes.")
+
+                    try:
+                        data = r.json()
+                    except:
+                        raise Exception("Erro ao processar o formato das legendas do YouTube.")
 
                     for event in data.get('events', []):
                         if 'segs' not in event: continue
@@ -265,6 +279,17 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         
                         full_transcript.append({'timestamp': timestamp, 'text': text_seg})
                         transcript_text += text_seg + " "
+                    
+                    # Se pegamos a legenda original porque a nativa falhou, traduzimos agora via scraping
+                    # Ou se o usuário escolher um idioma e não usamos tlang por algum motivo
+                    current_sub_lang = target_sub_lang.split('-')[0]
+                    if target_lang != current_sub_lang and "&tlang=" not in subtitle_url:
+                        st.write(f"🌐 Traduzindo texto (Via Fallback: {target_lang})...")
+                        transcript_text = translate_text(transcript_text, target_lang)
+                        # Nota: Traduzir timestamps um por um pode ser lento, focamos no texto principal primeiro
+                        # Mas para manter o UX, vamos traduzir os chunks do full_transcript também
+                        for entry in full_transcript:
+                            entry['text'] = translate_text(entry['text'], target_lang)
                     
                     success = True
 
