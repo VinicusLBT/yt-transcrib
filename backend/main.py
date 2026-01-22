@@ -162,11 +162,125 @@ def get_transcript(request: VideoRequest):
                 return {"video_id": video_id, "transcript": transcript, "full_text": full_text}
 
         except Exception as e_fallback:
-             print(f"Fallback failed: {e_fallback}")
-             # Mensagem amigável para o usuário sobre o bloqueio de IP
-             detail_msg = "O YouTube bloqueou o acesso vindo deste servidor cloud (Render/AWS)."
-             if "429" in str(e_fallback):
-                 detail_msg += " Erro 429: Muitas requisições detectadas pelo YouTube."
-             
-             raise HTTPException(status_code=500, detail=f"{detail_msg} Detalhes: {str(e_fallback)}")
+             print(f"Fallback 1 failed: {e_fallback}. Trying Invidious fallback...")
+
+             # 3. Fallback com Invidious (Instâncias Públicas)
+             # Isso usa servidores de terceiros para buscar os dados, evitando nosso IP bloqueado.
+             try:
+                import requests
+                # Lista de instâncias públicas que costumam funcionar
+                # (Rotacionar se falhar)
+                invidious_instances = [
+                    "https://inv.tux.pizza",
+                    "https://invidious.projectsegfau.lt",
+                    "https://invidious.fdn.fr",
+                    "https://vid.puffyan.us",
+                    "https://invidious.jing.rocks"
+                ]
+
+                last_error = None
+                
+                for instance in invidious_instances:
+                    try:
+                        print(f"Trying Invidious instance: {instance}")
+                        # Endpoint de API do Invidious para pegar info do vídeo
+                        # (Algumas instâncias exigem ?local=true para não usar googlevideo direto proxy)
+                        api_url = f"{instance}/api/v1/videos/{video_id}"
+                        
+                        r = requests.get(api_url, timeout=10)
+                        if r.status_code != 200:
+                            continue
+                            
+                        data = r.json()
+                        captions = data.get('captions', [])
+                        
+                        if not captions:
+                            continue
+
+                        # Escolher idioma (mesma lógica)
+                        target_caption = None
+                        # Procurar exato
+                        if request.language:
+                            target_caption = next((c for c in captions if c['languageCode'] == request.language), None)
+                        
+                        # Se não achou exato, procura prioridade
+                        if not target_caption:
+                            priority = ['pt', 'pt-BR', 'en']
+                            for p in priority:
+                                target_caption = next((c for c in captions if c['languageCode'] == p), None)
+                                if target_caption: break
+                        
+                        # Pegar qualquer um se ainda nulo
+                        if not target_caption:
+                             target_caption = captions[0]
+
+                        # Obter o conteúdo da legenda (formato VTT geralmente)
+                        # A URL geralmente é relativa ao dominio da instancia
+                        caption_url = instance + target_caption['url']
+                        
+                        r_cap = requests.get(caption_url, timeout=10)
+                        if r_cap.status_code != 200:
+                            continue
+                            
+                        # Parse VTT simples (o Invidious retorna VTT)
+                        vtt_content = r_cap.text
+                        
+                        # Parser super simplificado de webvtt para nosso formato
+                        # Ignora detalhes complexos, foca em pegar o texto e timestamp basico
+                        lines = vtt_content.splitlines()
+                        transcript = []
+                        current_entry = None
+                        
+                        import re
+                        # Regex para timestamp: 00:00:00.000 --> 00:00:02.000
+                        ts_pattern = re.compile(r'(\d{2}:\d{2}:\d{2}\.\d{3})\s-->\s(\d{2}:\d{2}:\d{2}\.\d{3})')
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if not line: continue
+                            if 'WEBVTT' in line: continue
+                            if 'X-TIMESTAMP-MAP' in line: continue
+                            
+                            match = ts_pattern.match(line)
+                            if match:
+                                start_str, end_str = match.groups()
+                                # Converter para segundos
+                                def parse_ts(ts):
+                                    h, m, s = ts.split(':')
+                                    s, ms = s.split('.')
+                                    return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000.0
+
+                                start = parse_ts(start_str)
+                                end = parse_ts(end_str)
+                                current_entry = {"text": "", "start": start, "duration": end - start}
+                                transcript.append(current_entry)
+                            elif current_entry and not line.isdigit(): # Evita numeros de sequencia se houver
+                                current_entry["text"] += line + " "
+
+                        # Limpar espaços extras
+                        for t in transcript:
+                            t['text'] = t['text'].strip()
+                        
+                        # Filtra vazios
+                        transcript = [t for t in transcript if t['text']]
+
+                        full_text = " ".join([t['text'] for t in transcript])
+                        return {"video_id": video_id, "transcript": transcript, "full_text": full_text}
+
+                    except Exception as e_inst:
+                        print(f"Instance {instance} failed: {e_inst}")
+                        last_error = e_inst
+                        continue
+
+                # Se saiu do loop, falhou em todas
+                raise HTTPException(status_code=500, detail="Todos os métodos falharam (YouTube IP Block e Invidious Fallback exausto). Tente rodar localmente.")
+
+             except Exception as e_final:
+                 # Se ambos falharem, retorna o erro original ou combinado
+                 print(f"Final fallback failed: {e_final}")
+                 detail_msg = "O YouTube bloqueou o acesso vindo deste servidor cloud (Render/AWS)."
+                 if "429" in str(e_fallback):
+                     detail_msg += " Erro 429: Muitas requisições detectadas pelo YouTube."
+                 
+                 raise HTTPException(status_code=500, detail=f"{detail_msg} Invidious Fail: {str(e_final)}")
 
