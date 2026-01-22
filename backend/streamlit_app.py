@@ -12,6 +12,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Meta Tags para tentar forçar o nome no Mobile (Best Effort)
+st.markdown("""
+    <head>
+        <meta name="application-name" content="YT Transcrib">
+        <meta name="apple-mobile-web-app-title" content="YT Transcrib">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
+    </head>
+""", unsafe_allow_html=True)
+
 # Estilização Customizada (CSS)
 st.markdown("""
 <style>
