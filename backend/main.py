@@ -109,6 +109,12 @@ def get_transcript(request: VideoRequest):
                 'nocheckcertificate': True,
             }
             
+            # Tentar usar cookies se o arquivo existir
+            import os
+            if os.path.exists("cookies.txt"):
+                print("Using cookies.txt for authentication")
+                ydl_opts['cookiefile'] = 'cookies.txt'
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Tenta extrair info com headers de navegador
                 info = ydl.extract_info(request.url, download=False)
