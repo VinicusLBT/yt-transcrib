@@ -103,12 +103,15 @@ def translate_text(text, target_lang):
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
             'client': 'gtx',
-            'sl': 'auto',  # auto-detect source
+            'sl': 'auto',
             'tl': target_lang,
             'dt': 't',
-            'q': text[:5000]  # Limite seguro
+            'q': text[:5000]
         }
-        response = requests.get(url, params=params, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, params=params, headers=headers, timeout=15)
         if response.ok:
             result = response.json()
             # Extrair texto traduzido do resultado
@@ -289,23 +292,34 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     
                     transcript_text = " ".join(temp_full_text)
 
-                    # TRADUÇÃO EM LOTE (BATCH) - Muito mais rápido e evita 429 do Google
+                    # TRADUÇÃO EM LOTE COM BARRA DE PROGRESSO
                     if target_lang != target_sub_lang.split('-')[0] and target_lang != "original":
-                        st.write(f"🌐 Traduzindo para {selected_lang_name} (Lote)...")
+                        # Barra de progresso visível
+                        progress_bar = st.progress(0, text="🎨 Iniciando tradução...")
                         
                         # 1. Traduzir o texto corrido (até 5000 chars por vez)
+                        chunks = [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]
+                        batch_size = 30
+                        timestamp_batches = (len(full_transcript) + batch_size - 1) // batch_size
+                        total_steps = len(chunks) + timestamp_batches
+                        current_step = 0
+                        
                         translated_text = ""
-                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
+                        for i, chunk in enumerate(chunks):
+                            current_step += 1
+                            pct = int((current_step / total_steps) * 100)
+                            progress_bar.progress(pct, text=f"✍️ Traduzindo texto principal... {pct}%")
                             translated_text += translate_text(chunk, target_lang) + " "
                         transcript_text = translated_text.strip()
 
-                        # 2. Traduzir os itens do timestamp em blocos para ser rápido
-                        # Agrupamos 30 linhas por vez para traduzir num único request
-                        batch_size = 30
+                        # 2. Traduzir os itens do timestamp em blocos
                         for i in range(0, len(full_transcript), batch_size):
+                            current_step += 1
+                            pct = int((current_step / total_steps) * 100)
+                            progress_bar.progress(pct, text=f"⏱️ Traduzindo timestamps... {pct}%")
+                            
                             batch = full_transcript[i:i+batch_size]
                             batch_texts = [item['text'] for item in batch]
-                            # Usamos um delimitador que o tradutor costuma ignorar ou manter
                             combined = " ||| ".join(batch_texts)
                             translated_combined = translate_text(combined, target_lang)
                             translated_list = translated_combined.split("|||")
@@ -313,6 +327,11 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             for j, item in enumerate(batch):
                                 if j < len(translated_list):
                                     item['text'] = translated_list[j].strip()
+                        
+                        # Finalizar barra
+                        progress_bar.progress(100, text="✅ Tradução concluída!")
+                        time.sleep(1)
+                        progress_bar.empty()
                     
                     success = True
                 status.update(label="Concluido!", state="complete", expanded=False)
