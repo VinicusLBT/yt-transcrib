@@ -236,15 +236,23 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     if not target_sub_lang:
                         target_sub_lang = list(subs.keys())[0]
 
-                    st.write(f"📝 Obtendo legendas em: {target_sub_lang}...")
+                    st.write(f"📝 Obtendo legendas (Base: {target_sub_lang})...")
                     
                     sub_tracks = subs[target_sub_lang]
                     json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
                     
                     if not json3_track:
-                        raise Exception("Formato de legenda compatível não encontrado.")
+                        # Tenta pegar qualquer formato se json3 falhar
+                        json3_track = sub_tracks[0]
 
-                    r = requests.get(json3_track['url'], headers=headers)
+                    subtitle_url = json3_track['url']
+                    
+                    # Se o idioma escolhido for diferente do idioma base, usa tradução nativa do YouTube
+                    if target_lang != target_sub_lang.split('-')[0]:
+                        subtitle_url += f"&tlang={target_lang}"
+                        st.write(f"🌐 Ativando tradução nativa para: {target_lang}...")
+
+                    r = requests.get(subtitle_url, headers=headers)
                     data = r.json()
 
                     for event in data.get('events', []):
@@ -260,14 +268,18 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     
                     success = True
 
-                status.update(label="Concluído!", state="complete", expanded=False)
+                status.update(label="Concluido!", state="complete", expanded=False)
             
             except Exception as e:
-                status.update(label="Erro", state="error", expanded=False)
-                st.error(f"Ocorreu um erro: {str(e)}")
-                st.info("Dica: Verifique se o vídeo tem legendas ou permissões.")
-        
-        # Exibição dos Resultados (FORA DO STATUS PARA APARECER AUTOMATICAMENTE)
+                success = False
+                error_msg = str(e)
+                status.update(label="Erro no processamento", state="error", expanded=False)
+                
+        # Exibição dos Resultados ou Erros (FORA DO STATUS PARA SEMPRE APARECER)
+        if not success and 'error_msg' in locals():
+            st.error(f"❌ Ocorreu um erro: {error_msg}")
+            st.info("💡 Dica: Verifique se o vídeo tem legendas ou se o link está correto. Algumas lives podem demorar para gerar legendas.")
+            
         if success:
             st.success("Transcrição realizada com sucesso!")
             st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
