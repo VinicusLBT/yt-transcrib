@@ -91,42 +91,36 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
-# Função para traduzir texto usando MyMemory API
+# Função para traduzir texto usando Google Translate (via API gratuita)
 def translate_text(text, target_lang):
-    """Traduz texto usando a API gratuita MyMemory"""
+    """Traduz texto usando Google Translate (scraping - gratuito e rápido)"""
     if not text or target_lang == "original":
         return text
     try:
-        # Dividir texto em partes menores (limite de 500 chars por request)
-        words = text.split(' ')
-        chunks = []
-        current_chunk = ''
-        for word in words:
-            if len(current_chunk + ' ' + word) > 500:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = word
-            else:
-                current_chunk += ' ' + word
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        translated_chunks = []
-        for chunk in chunks:
-            response = requests.get(
-                f"https://api.mymemory.translated.net/get?q={requests.utils.quote(chunk)}&langpair=autodetect|{target_lang}"
-            )
-            if response.ok:
-                data = response.json()
-                if data.get('responseStatus') == 200 and data.get('responseData', {}).get('translatedText'):
-                    translated_chunks.append(data['responseData']['translatedText'])
-                else:
-                    translated_chunks.append(chunk)
-            else:
-                translated_chunks.append(chunk)
-        return ' '.join(translated_chunks)
+        # Google Translate aceita textos bem maiores - traduz tudo de uma vez
+        # Usando a API web do Google Translate (não a paga)
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            'client': 'gtx',
+            'sl': 'auto',  # auto-detect source
+            'tl': target_lang,
+            'dt': 't',
+            'q': text[:5000]  # Limite seguro
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.ok:
+            result = response.json()
+            # Extrair texto traduzido do resultado
+            translated_parts = []
+            if result and result[0]:
+                for part in result[0]:
+                    if part[0]:
+                        translated_parts.append(part[0])
+            translated = ''.join(translated_parts)
+            return translated if translated else text
+        return text
     except Exception as e:
-        st.warning(f"Tradução falhou, mostrando original: {str(e)}")
+        # Fallback silencioso para o texto original
         return text
 
 # Título e Cabeçalho
