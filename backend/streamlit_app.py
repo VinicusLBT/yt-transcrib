@@ -158,19 +158,35 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                 
                 # Exibição dos Resultados
                 st.success("Transcrição realizada com sucesso!")
+                st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
                 
-                tab1, tab2 = st.tabs(["📄 Texto Corrido", "⏱️ Com Timestamps"])
+                tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
                 
                 with tab1:
-                    st.text_area("Texto Limpo", value=transcript_text, height=400)
-                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao.txt")
+                    # Usando st.code para ganhar o botão de copiar nativo
+                    st.code(transcript_text, language="text")
+                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt")
                 
                 with tab2:
                     timestamped_text = "\n".join(full_transcript)
-                    st.text_area("Texto com Tempo", value=timestamped_text, height=400)
-                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo.txt")
+                    st.code(timestamped_text, language="text")
+                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt")
 
             except Exception as e:
                 status.update(label="Erro", state="error", expanded=False)
                 st.error(f"Ocorreu um erro: {str(e)}")
                 st.info("Dica: Verifique se o vídeo tem legendas ou permissões.")
+
+# Rodapé Profissional
+st.markdown("""
+<br><br><br>
+<div style='text-align: center; color: #666; font-size: 12px; padding: 20px; border-top: 1px solid #2d2d30;'>
+    <p>© 2026 <b>Alerial</b>. Todos os direitos reservados.</p>
+    <p>
+        <a href='#' style='color: #888; text-decoration: none;'>Termos de Uso (EULA)</a> | 
+        <a href='#' style='color: #888; text-decoration: none;'>Política de Privacidade</a> | 
+        <a href='#' style='color: #888; text-decoration: none;'>Suporte</a>
+    </p>
+    <p style='margin-top: 10px; font-style: italic;'>Desenvolvido para facilitar seus estudos e pesquisas.</p>
+</div>
+""", unsafe_allow_html=True)
