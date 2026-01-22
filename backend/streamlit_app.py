@@ -1,112 +1,176 @@
 import streamlit as st
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi
 import requests
-import re
 import os
+import time
 
-st.set_page_config(page_title="YT Transcrib API", layout="wide")
+# Configuração da Página
+st.set_page_config(
+    page_title="YT Transcrib",
+    page_icon="🎙️",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-st.title("YT Transcrib API 🚀")
-st.write("This is a Streamlit-based API for YouTube Transcription to bypass IP blocks.")
+# Estilização Customizada (CSS)
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #0e0e11;
+        color: #efeff1;
+    }
+    .stButton>button {
+        background-color: #e50914;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        background-color: #b2070f;
+        transform: scale(1.02);
+    }
+    .stTextInput>div>div>input {
+        background-color: #18181b;
+        color: white;
+        border-radius: 8px;
+        border: 1px solid #2d2d30;
+    }
+    .success-box {
+        padding: 1rem;
+        border-radius: 8px;
+        background-color: #18181b;
+        border: 1px solid #2d2d30;
+        margin-top: 1rem;
+    }
+    h1 {
+        background: -webkit-linear-gradient(45deg, #e50914, #ff6b6b);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Get query parameters
-query_params = st.query_params
-url = query_params.get("url", None)
-lang = query_params.get("lang", "pt")
+# Título e Cabeçalho
+st.title("YT Transcrib 🎙️")
+st.write("Transforme vídeos do YouTube em texto em segundos.")
 
-def extract_video_id(url):
-    if "v=" in url:
-        return url.split("v=")[1].split("&")[0]
-    elif "youtu.be/" in url:
-        return url.split("youtu.be/")[1].split("?")[0]
-    return None
+# Inputs
+url = st.text_input("Cole a URL do vídeo aqui:", placeholder="https://www.youtube.com/watch?v=...")
+lang_options = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
+selected_lang_name = st.selectbox("Idioma de Preferência:", list(lang_options.keys()))
+lang = lang_options[selected_lang_name]
 
-import json
-
-if url:
-    video_id = extract_video_id(url)
-    if not video_id:
-        st.json({"error": "Invalid URL"})
+# Botão Transcrever
+if st.button("Transcrever Vídeo", use_container_width=True):
+    if not url:
+        st.warning("⚠️ Por favor, insira uma URL válida.")
     else:
-        # Tentar usar cookies se existirem nos secrets do Streamlit
-        cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
-        cookie_file = "cookies.txt"
-        if cookies_content:
-            with open(cookie_file, "w") as f:
-                f.write(cookies_content)
-        
-        # Headers para disfarce
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.youtube.com/',
-        }
-
-        try:
-            # 1. Tentar yt-dlp com cookies (Método Blindado)
-            ydl_opts = {
-                'skip_download': True,
-                'writesubtitles': True,
-                'writeautomaticsub': True,
-                'quiet': True,
-                'no_warnings': True,
-                'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
-                'user_agent': headers['User-Agent'],
-            }
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                subs = info.get('automatic_captions') or info.get('subtitles')
+        with st.status("Processando...", expanded=True) as status:
+            try:
+                st.write("🔍 Conectando ao YouTube (Modo Seguro)...")
                 
-                if not subs:
-                    raise Exception("No subtitles found")
+                # Configurar Cookies
+                cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
+                cookie_file = "cookies.txt"
+                if cookies_content:
+                    with open(cookie_file, "w") as f:
+                        f.write(cookies_content)
                 
-                # Selecionar idioma
-                target_lang = None
-                priority = [lang, 'pt', 'pt-BR', 'en']
+                # Headers e Opções do yt-dlp
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.youtube.com/',
+                }
                 
-                # Tentar match exato e prioridades
-                for p in priority:
-                    if p in subs:
-                        target_lang = p
-                        break
+                ydl_opts = {
+                    'skip_download': True,
+                    'writesubtitles': True,
+                    'writeautomaticsub': True,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
+                    'user_agent': headers['User-Agent'],
+                }
+
+                # Extração
+                st.write("📥 Baixando legendas...")
+                transcript_text = ""
+                full_transcript = []
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    subs = info.get('automatic_captions') or info.get('subtitles')
+                    
+                    if not subs:
+                        raise Exception("Nenhuma legenda encontrada para este vídeo.")
+                    
+                    # Lógica de Seleção de Idioma Melhorada
+                    target_lang = None
+                    # 1. Tenta exato
+                    if lang in subs:
+                        target_lang = lang
+                    # 2. Tenta variações (pt-BR, pt-PT)
+                    if not target_lang:
+                        for code in subs.keys():
+                            if code.startswith(lang):
+                                target_lang = code
+                                break
+                    # 3. Fallback para prioridades
+                    if not target_lang:
+                        priority = ['pt', 'en']
+                        for p in priority:
+                            for code in subs.keys():
+                                if code.startswith(p):
+                                    target_lang = code
+                                    break
+                            if target_lang: break
+                    # 4. Pega o primeiro que tiver
+                    if not target_lang:
+                        target_lang = list(subs.keys())[0]
+
+                    st.write(f"📝 Processando idioma: {target_lang}...")
+                    
+                    sub_tracks = subs[target_lang]
+                    json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
+                    
+                    if not json3_track:
+                        # Tentar VTT se JSON3 falhar
+                        raise Exception("Formato de legenda compatível não encontrado.")
+
+                    r = requests.get(json3_track['url'], headers=headers)
+                    data = r.json()
+
+                    for event in data.get('events', []):
+                        if 'segs' not in event: continue
+                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                        if not text_seg: continue
+                        
+                        start = event.get('tStartMs', 0) / 1000.0
+                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                        
+                        full_transcript.append(f"[{timestamp}] {text_seg}")
+                        transcript_text += text_seg + " "
+
+                status.update(label="Concluído!", state="complete", expanded=False)
                 
-                if not target_lang:
-                    target_lang = list(subs.keys())[0]
-
-                # Pegar URL do JSON3
-                sub_tracks = subs[target_lang]
-                json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
+                # Exibição dos Resultados
+                st.success("Transcrição realizada com sucesso!")
                 
-                if not json3_track:
-                    raise Exception("JSON3 format not found")
-
-                # Baixar legenda
-                r = requests.get(json3_track['url'], headers=headers)
-                data = r.json()
-
-                # Processar
-                transcript = []
-                for event in data.get('events', []):
-                    if 'segs' not in event: continue
-                    text = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                    if not text: continue
-                    transcript.append({
-                        "text": text,
-                        "start": event.get('tStartMs', 0) / 1000.0,
-                        "duration": event.get('dDurationMs', 0) / 1000.0
-                    })
-
-                full_text = " ".join([t['text'] for t in transcript])
+                tab1, tab2 = st.tabs(["📄 Texto Corrido", "⏱️ Com Timestamps"])
                 
-                st.json({
-                    "video_id": video_id,
-                    "transcript": transcript,
-                    "full_text": full_text
-                })
+                with tab1:
+                    st.text_area("Texto Limpo", value=transcript_text, height=400)
+                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao.txt")
+                
+                with tab2:
+                    timestamped_text = "\n".join(full_transcript)
+                    st.text_area("Texto com Tempo", value=timestamped_text, height=400)
+                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo.txt")
 
-        except Exception as e:
-            st.json({"error": str(e), "detail": "Failed to transcribe"})
-
-else:
-    st.write("Pass ?url=YOUTUBE_URL&lang=pt to use the API")
+            except Exception as e:
+                status.update(label="Erro", state="error", expanded=False)
+                st.error(f"Ocorreu um erro: {str(e)}")
+                st.info("Dica: Verifique se o vídeo tem legendas ou permissões.")
