@@ -256,10 +256,19 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     try:
                         r = requests.get(subtitle_url, headers=headers, timeout=10)
                         
-                        if r.status_code == 429 or r.status_code != 200:
-                            # ERRO 429 ou Geral -> TENTA FALLBACK IMEDIATO COM YouTubeTranscriptApi
-                            st.write("🔄 YouTube bloqueou acesso direto. Tentando canais secundários...")
-                            raise Exception("429_OR_ERROR")
+                        manual_translation_needed = False
+                        
+                        # Se falhou E estava tentando traduzir (tlang), tenta pegar o original
+                        if (r.status_code != 200) and "&tlang=" in subtitle_url:
+                            st.write("⚠️ Tradução nativa bloqueada. Tentando buscar original e traduzir via Google...")
+                            # Fallback 1: Buscar original
+                            subtitle_url = json3_track['url']
+                            r = requests.get(subtitle_url, headers=headers, timeout=10)
+                            manual_translation_needed = True
+                        
+                        # Se ainda falhou (seja original ou nova tentativa), vai pro fallback pesado
+                        if r.status_code != 200:
+                             raise Exception("429_OR_ERROR")
 
                         data = r.json()
                         for event in data.get('events', []):
@@ -268,8 +277,14 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             if not text_seg: continue
                             start = event.get('tStartMs', 0) / 1000.0
                             timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                            
+                            # Se precisar de tradução manual
+                            if manual_translation_needed and target_lang != "original":
+                                text_seg = translate_text(text_seg, target_lang)
+                                
                             full_transcript.append({'timestamp': timestamp, 'text': text_seg})
                             transcript_text += text_seg + " "
+                            
                         success = True
 
                     except Exception as e:
