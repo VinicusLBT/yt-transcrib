@@ -147,17 +147,20 @@ if video_id:
     </div>
     """, unsafe_allow_html=True)
 
-# Seletor de Tradução (não mais seletor de idioma do vídeo)
-translate_options = {
-    "🌐 Original (Sem tradução)": "original",
+# Seletor de Idioma da Legenda (pega direto do YouTube - instantâneo!)
+lang_options = {
     "🇧🇷 Português": "pt", 
     "🇺🇸 Inglês": "en", 
     "🇪🇸 Espanhol": "es", 
     "🇫🇷 Francês": "fr",
-    "🇩🇪 Alemão": "de"
+    "🇩🇪 Alemão": "de",
+    "🇯🇵 Japonês": "ja",
+    "🇰🇷 Coreano": "ko",
+    "🇨🇳 Chinês": "zh"
 }
-selected_translate = st.selectbox("Traduzir transcrição para:", list(translate_options.keys()))
-target_lang = translate_options[selected_translate]
+selected_lang_name = st.selectbox("Idioma da transcrição:", list(lang_options.keys()))
+target_lang = lang_options[selected_lang_name]
+st.caption("💡 O YouTube gera legendas automáticas em vários idiomas - super rápido!")
 
 # Botão Transcrever
 if st.button("Transcrever Vídeo", use_container_width=True):
@@ -205,16 +208,31 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     if not subs:
                         raise Exception("Nenhuma legenda encontrada para este vídeo.")
                     
-                    # Pegar o primeiro idioma disponível (vamos traduzir depois se necessário)
-                    priority = ['pt', 'en', 'es', 'fr']
+                    # Buscar legenda no idioma escolhido pelo usuário
                     target_sub_lang = None
-                    for p in priority:
+                    
+                    # 1. Tenta exato (ex: "pt" ou "en")
+                    if target_lang in subs:
+                        target_sub_lang = target_lang
+                    
+                    # 2. Tenta variações (pt-BR, en-US, etc)
+                    if not target_sub_lang:
                         for code in subs.keys():
-                            if code.startswith(p):
+                            if code.startswith(target_lang):
                                 target_sub_lang = code
                                 break
-                        if target_sub_lang:
-                            break
+                    
+                    # 3. Fallback: pega qualquer idioma disponível
+                    if not target_sub_lang:
+                        fallback_priority = ['pt', 'en', 'es', 'fr']
+                        for p in fallback_priority:
+                            for code in subs.keys():
+                                if code.startswith(p):
+                                    target_sub_lang = code
+                                    break
+                            if target_sub_lang:
+                                break
+                    
                     if not target_sub_lang:
                         target_sub_lang = list(subs.keys())[0]
 
@@ -242,13 +260,6 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     
                     success = True
 
-                # Traduzir se necessário
-                if success and target_lang != "original":
-                    st.write(f"🌐 Traduzindo para {selected_translate.split(' ')[1] if len(selected_translate.split(' ')) > 1 else target_lang}...")
-                    transcript_text = translate_text(transcript_text, target_lang)
-                    for entry in full_transcript:
-                        entry['text'] = translate_text(entry['text'], target_lang)
-
                 status.update(label="Concluído!", state="complete", expanded=False)
             
             except Exception as e:
@@ -259,8 +270,6 @@ if st.button("Transcrever Vídeo", use_container_width=True):
         # Exibição dos Resultados (FORA DO STATUS PARA APARECER AUTOMATICAMENTE)
         if success:
             st.success("Transcrição realizada com sucesso!")
-            if target_lang != "original":
-                st.caption(f"✅ Texto traduzido para {selected_translate.split(' ')[1] if len(selected_translate.split(' ')) > 1 else target_lang}")
             st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
             
             import textwrap
