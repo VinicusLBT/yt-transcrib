@@ -3,6 +3,7 @@ import yt_dlp
 import requests
 import os
 import time
+import re
 
 # Configuração da Página
 st.set_page_config(
@@ -63,23 +64,113 @@ st.markdown("""
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+    .video-preview {
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #2d2d30;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# Função para extrair Video ID do YouTube
+def extract_video_id(url):
+    """Extrai o ID do vídeo de várias formas de URL do YouTube"""
+    if not url:
+        return None
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtube\.com\/watch\?.+&v=)([^&\s]+)',
+        r'youtu\.be\/([^?\s]+)',
+        r'youtube\.com\/embed\/([^?\s]+)',
+        r'youtube\.com\/shorts\/([^?\s]+)',
+        r'youtube\.com\/v\/([^?\s]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+# Função para traduzir texto usando MyMemory API
+def translate_text(text, target_lang):
+    """Traduz texto usando a API gratuita MyMemory"""
+    if not text or target_lang == "original":
+        return text
+    try:
+        # Dividir texto em partes menores (limite de 500 chars por request)
+        words = text.split(' ')
+        chunks = []
+        current_chunk = ''
+        for word in words:
+            if len(current_chunk + ' ' + word) > 500:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = word
+            else:
+                current_chunk += ' ' + word
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        translated_chunks = []
+        for chunk in chunks:
+            response = requests.get(
+                f"https://api.mymemory.translated.net/get?q={requests.utils.quote(chunk)}&langpair=autodetect|{target_lang}"
+            )
+            if response.ok:
+                data = response.json()
+                if data.get('responseStatus') == 200 and data.get('responseData', {}).get('translatedText'):
+                    translated_chunks.append(data['responseData']['translatedText'])
+                else:
+                    translated_chunks.append(chunk)
+            else:
+                translated_chunks.append(chunk)
+        return ' '.join(translated_chunks)
+    except Exception as e:
+        st.warning(f"Tradução falhou, mostrando original: {str(e)}")
+        return text
 
 # Título e Cabeçalho
 st.title("YT Transcrib 🎙️")
 st.write("Transforme vídeos do YouTube em texto em segundos.")
 
-# Inputs
+# Input da URL
 url = st.text_input("Cole a URL do vídeo aqui:", placeholder="https://www.youtube.com/watch?v=...")
-lang_options = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
-selected_lang_name = st.selectbox("Idioma de Preferência:", list(lang_options.keys()))
-lang = lang_options[selected_lang_name]
+
+# Preview do Vídeo
+video_id = extract_video_id(url)
+if video_id:
+    st.markdown("📺 **Confirme o vídeo:**")
+    st.markdown(f"""
+    <div class="video-preview">
+        <iframe 
+            width="100%" 
+            height="315" 
+            src="https://www.youtube.com/embed/{video_id}" 
+            frameborder="0" 
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+            allowfullscreen>
+        </iframe>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Seletor de Tradução (não mais seletor de idioma do vídeo)
+translate_options = {
+    "🌐 Original (Sem tradução)": "original",
+    "🇧🇷 Português": "pt", 
+    "🇺🇸 Inglês": "en", 
+    "🇪🇸 Espanhol": "es", 
+    "🇫🇷 Francês": "fr",
+    "🇩🇪 Alemão": "de"
+}
+selected_translate = st.selectbox("Traduzir transcrição para:", list(translate_options.keys()))
+target_lang = translate_options[selected_translate]
 
 # Botão Transcrever
 if st.button("Transcrever Vídeo", use_container_width=True):
     if not url:
         st.warning("⚠️ Por favor, insira uma URL válida.")
+    elif not video_id:
+        st.warning("⚠️ URL do YouTube inválida. Verifique o link.")
     else:
         with st.status("Processando...", expanded=True) as status:
             try:
@@ -120,37 +211,25 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     if not subs:
                         raise Exception("Nenhuma legenda encontrada para este vídeo.")
                     
-                    # Lógica de Seleção de Idioma Melhorada
-                    target_lang = None
-                    # 1. Tenta exato
-                    if lang in subs:
-                        target_lang = lang
-                    # 2. Tenta variações (pt-BR, pt-PT)
-                    if not target_lang:
+                    # Pegar o primeiro idioma disponível (vamos traduzir depois se necessário)
+                    priority = ['pt', 'en', 'es', 'fr']
+                    target_sub_lang = None
+                    for p in priority:
                         for code in subs.keys():
-                            if code.startswith(lang):
-                                target_lang = code
+                            if code.startswith(p):
+                                target_sub_lang = code
                                 break
-                    # 3. Fallback para prioridades
-                    if not target_lang:
-                        priority = ['pt', 'en']
-                        for p in priority:
-                            for code in subs.keys():
-                                if code.startswith(p):
-                                    target_lang = code
-                                    break
-                            if target_lang: break
-                    # 4. Pega o primeiro que tiver
-                    if not target_lang:
-                        target_lang = list(subs.keys())[0]
+                        if target_sub_lang:
+                            break
+                    if not target_sub_lang:
+                        target_sub_lang = list(subs.keys())[0]
 
-                    st.write(f"📝 Processando idioma: {target_lang}...")
+                    st.write(f"📝 Obtendo legendas em: {target_sub_lang}...")
                     
-                    sub_tracks = subs[target_lang]
+                    sub_tracks = subs[target_sub_lang]
                     json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
                     
                     if not json3_track:
-                        # Tentar VTT se JSON3 falhar
                         raise Exception("Formato de legenda compatível não encontrado.")
 
                     r = requests.get(json3_track['url'], headers=headers)
@@ -164,10 +243,17 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         start = event.get('tStartMs', 0) / 1000.0
                         timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
                         
-                        full_transcript.append(f"[{timestamp}] {text_seg}")
+                        full_transcript.append({'timestamp': timestamp, 'text': text_seg})
                         transcript_text += text_seg + " "
                     
                     success = True
+
+                # Traduzir se necessário
+                if success and target_lang != "original":
+                    st.write(f"🌐 Traduzindo para {selected_translate.split(' ')[1] if len(selected_translate.split(' ')) > 1 else target_lang}...")
+                    transcript_text = translate_text(transcript_text, target_lang)
+                    for entry in full_transcript:
+                        entry['text'] = translate_text(entry['text'], target_lang)
 
                 status.update(label="Concluído!", state="complete", expanded=False)
             
@@ -179,6 +265,8 @@ if st.button("Transcrever Vídeo", use_container_width=True):
         # Exibição dos Resultados (FORA DO STATUS PARA APARECER AUTOMATICAMENTE)
         if success:
             st.success("Transcrição realizada com sucesso!")
+            if target_lang != "original":
+                st.caption(f"✅ Texto traduzido para {selected_translate.split(' ')[1] if len(selected_translate.split(' ')) > 1 else target_lang}")
             st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
             
             import textwrap
@@ -186,14 +274,12 @@ if st.button("Transcrever Vídeo", use_container_width=True):
             tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
             
             with tab1:
-                # Usando st.code para ter o botão de copiar nativo
-                # Truque: Quebrar o texto manualmente para simular word-wrap no st.code
                 wrapped_text = textwrap.fill(transcript_text, width=80) 
                 st.code(wrapped_text, language="text")
                 st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
             
             with tab2:
-                timestamped_text = "\n".join(full_transcript)
+                timestamped_text = "\n".join([f"[{e['timestamp']}] {e['text']}" for e in full_transcript])
                 st.code(timestamped_text, language="text")
                 st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
 
