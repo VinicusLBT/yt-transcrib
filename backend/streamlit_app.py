@@ -4,7 +4,9 @@ import requests
 import os
 import time
 import re
+import textwrap
 from youtube_transcript_api import YouTubeTranscriptApi
+from deep_translator import GoogleTranslator
 
 # Configuração da Página
 st.set_page_config(
@@ -92,37 +94,36 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
-# Função para traduzir texto usando Google Translate (via API gratuita)
-def translate_text(text, target_lang):
-    """Traduz texto usando Google Translate (scraping - gratuito e rápido)"""
-    if not text or target_lang == "original":
-        return text
+# Função ROBUSTA para traduzir texto usando deep-translator com chunking
+def translate_text(texto, target_lang):
+    """Traduz texto usando deep-translator com chunking para textos longos"""
+    if not texto or target_lang == "original":
+        return texto
+    
     try:
-        # Google Translate aceita textos bem maiores - traduz tudo de uma vez
-        # Usando a API web do Google Translate (não a paga)
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx',
-            'sl': 'auto',  # auto-detect source
-            'tl': target_lang,
-            'dt': 't',
-            'q': text[:5000]  # Limite seguro
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.ok:
-            result = response.json()
-            # Extrair texto traduzido do resultado
-            translated_parts = []
-            if result and result[0]:
-                for part in result[0]:
-                    if part[0]:
-                        translated_parts.append(part[0])
-            translated = ''.join(translated_parts)
-            return translated if translated else text
-        return text
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        
+        # Se for curto, traduz direto
+        if len(texto) < 4500:
+            return translator.translate(texto)
+        
+        # CHUNKING: Divide em pedaços de 4000 caracteres
+        pedacos = textwrap.wrap(texto, 4000, break_long_words=False, replace_whitespace=False)
+        texto_traduzido_final = []
+        
+        for pedaco in pedacos:
+            try:
+                traducao = translator.translate(pedaco)
+                texto_traduzido_final.append(traducao)
+            except Exception:
+                # Se um pedaço falhar, mantém o original
+                texto_traduzido_final.append(pedaco)
+        
+        return " ".join(texto_traduzido_final)
+    
     except Exception as e:
-        # Fallback silencioso para o texto original
-        return text
+        # REDE DE SEGURANÇA: Se tudo der errado, retorna o original
+        return texto
 
 # Título e Cabeçalho
 st.title("YT Transcrib 🎙️")
