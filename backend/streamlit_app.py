@@ -254,23 +254,41 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         st.write(f"🌐 Ativando tradução nativa para: {target_lang}...")
 
                     try:
-                        r = requests.get(subtitle_url, headers=headers, timeout=10)
-                        
+                         # Variável para controlar se precisamos traduzir manualmente
                         manual_translation_needed = False
                         
-                        # Se falhou E estava tentando traduzir (tlang), tenta pegar o original
-                        if (r.status_code != 200) and "&tlang=" in subtitle_url:
-                            st.write("⚠️ Tradução nativa bloqueada. Tentando buscar original e traduzir via Google...")
-                            # Fallback 1: Buscar original
-                            subtitle_url = json3_track['url']
+                        try:
+                            # TENTATIVA 1: Legenda Nativa (pode incluir &tlang=)
                             r = requests.get(subtitle_url, headers=headers, timeout=10)
-                            manual_translation_needed = True
-                        
-                        # Se ainda falhou (seja original ou nova tentativa), vai pro fallback pesado
-                        if r.status_code != 200:
-                             raise Exception("429_OR_ERROR")
+                            
+                            # Se falhou E estavamos tentando traduzir -> Forçar erro
+                            if r.status_code != 200 and "&tlang=" in subtitle_url:
+                                raise Exception("NATIVE_TRANSLATION_FAILED")
+                                
+                            # Se falhou mas era original -> Erro grave
+                            if r.status_code != 200:
+                                 raise Exception("FETCH_FAILED")
 
-                        data = r.json()
+                            data = r.json()
+                            
+                        except Exception as e:
+                            # TENTATIVA 2: Fallback para Original + Tradução Manual
+                            if "&tlang=" in subtitle_url:
+                                try:
+                                    st.write("⚠️ Tradução nativa bloqueada. Tentando buscar original e traduzir via Google...")
+                                    subtitle_url = json3_track['url'] # URL limpa sem tlang
+                                    r = requests.get(subtitle_url, headers=headers, timeout=10)
+                                    if r.status_code == 200:
+                                        data = r.json()
+                                        manual_translation_needed = True 
+                                    else:
+                                        raise Exception("ORIGINAL_FETCH_FAILED")
+                                except:
+                                    raise Exception("ALL_REQUESTS_FAILED")
+                            else:
+                                raise e
+
+                        # Processamento dos dados
                         for event in data.get('events', []):
                             if 'segs' not in event: continue
                             text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
@@ -278,7 +296,6 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             start = event.get('tStartMs', 0) / 1000.0
                             timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
                             
-                            # Se precisar de tradução manual
                             if manual_translation_needed and target_lang != "original":
                                 text_seg = translate_text(text_seg, target_lang)
                                 
@@ -287,7 +304,8 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                             
                         success = True
 
-                    except Exception as e:
+                    except Exception as e_main:
+
                         # FALLBACK COM YouTubeTranscriptApi
                         try:
                             st.write("📡 Conectando via canais alternativos...")
