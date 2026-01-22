@@ -2,3 +2,5 @@ fastapi
 uvicorn
 youtube-transcript-api
 pydantic
+yt-dlp
+requests
