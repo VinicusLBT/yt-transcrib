@@ -5,27 +5,21 @@ import os
 import time
 import re
 from youtube_transcript_api import YouTubeTranscriptApi
+from openai import OpenAI
 
 # Configuração da Página
 st.set_page_config(
-    page_title="YT Transcrib",
+    page_title="YT Transcrib + AI",
     page_icon="🎙️",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-# Meta Tags para tentar forçar o nome no Mobile (Best Effort)
-st.markdown("""
-    <head>
-        <meta name="application-name" content="YT Transcrib">
-        <meta name="apple-mobile-web-app-title" content="YT Transcrib">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="mobile-web-app-capable" content="yes">
-        <!-- Ícone para Mobile (SVG Data URI) -->
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
-        <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>">
-    </head>
-""", unsafe_allow_html=True)
+# Groq Client Setup
+client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=st.secrets.get("GROQ_API_KEY")
+)
 
 # Estilização Customizada (CSS)
 st.markdown("""
@@ -74,7 +68,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Função para extrair Video ID do YouTube
+# Funções Utilitárias
+
 def extract_video_id(url):
     """Extrai o ID do vídeo de várias formas de URL do YouTube"""
     if not url:
@@ -84,7 +79,6 @@ def extract_video_id(url):
         r'youtu\.be\/([^?\s]+)',
         r'youtube\.com\/embed\/([^?\s]+)',
         r'youtube\.com\/shorts\/([^?\s]+)',
-        r'youtube\.com\/v\/([^?\s]+)',
     ]
     for pattern in patterns:
         match = re.search(pattern, url)
@@ -92,41 +86,45 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
-# Função para traduzir texto usando Google Translate (via API gratuita)
-def translate_text(text, target_lang):
-    """Traduz texto usando Google Translate (scraping - gratuito e rápido)"""
-    if not text or target_lang == "original":
-        return text
+def resumir_transcricao(texto_completo):
+    """Gera um resumo estruturado usando Groq (Llama 3)"""
+    # Limite seguro de caracteres para o contexto
+    texto_para_resumir = texto_completo[:15000]
+    
+    prompt = f"""
+    Atue como um assistente especialista em análise de conteúdo de vídeo.
+    Sua tarefa é criar um resumo executivo, estruturado e altamente informativo do texto abaixo.
+    
+    A estrutura deve seguir este padrão:
+    1. 📌 **Visão Geral**: Um parágrafo curto resumindo o tema principal.
+    2. 🔑 **Pontos Chave**: Lista com os momentos e ideias mais importantes.
+    3. 💡 **Conclusão/Insight**: Qual a principal lição ou mensagem final do vídeo.
+    
+    Regras:
+    - Responda SEMPRE em Português do Brasil.
+    - Use Markdown para formatação.
+    - Seja direto, mas mantenha a profundidade das informações.
+    
+    Texto do vídeo:
+    {texto_para_resumir}
+    """
+    
     try:
-        # Google Translate aceita textos bem maiores - traduz tudo de uma vez
-        # Usando a API web do Google Translate (não a paga)
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            'client': 'gtx',
-            'sl': 'auto',  # auto-detect source
-            'tl': target_lang,
-            'dt': 't',
-            'q': text[:5000]  # Limite seguro
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.ok:
-            result = response.json()
-            # Extrair texto traduzido do resultado
-            translated_parts = []
-            if result and result[0]:
-                for part in result[0]:
-                    if part[0]:
-                        translated_parts.append(part[0])
-            translated = ''.join(translated_parts)
-            return translated if translated else text
-        return text
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[
+                {"role": "system", "content": "Você é um assistente útil que resume vídeos com precisão."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        # Fallback silencioso para o texto original
-        return text
+        return f"Erro ao gerar resumo: {str(e)}"
 
 # Título e Cabeçalho
-st.title("YT Transcrib 🎙️")
-st.write("Transforme vídeos do YouTube em texto em segundos.")
+st.title("YT Transcrib 🎙️ + AI")
+st.write("Transcreva vídeos e gere resumos inteligentes com Inteligência Artificial.")
 
 # Input da URL
 url = st.text_input("Cole a URL do vídeo aqui:", placeholder="https://www.youtube.com/watch?v=...")
@@ -135,226 +133,171 @@ url = st.text_input("Cole a URL do vídeo aqui:", placeholder="https://www.youtu
 video_id = extract_video_id(url)
 if video_id:
     st.markdown("📺 **Confirme o vídeo:**")
-    st.markdown(f"""
-    <div class="video-preview">
-        <iframe 
-            width="100%" 
-            height="315" 
-            src="https://www.youtube.com/embed/{video_id}" 
-            frameborder="0" 
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-            allowfullscreen>
-        </iframe>
-    </div>
-    """, unsafe_allow_html=True)
+    st.video(url)
 
-# Seletor de Idioma da Legenda (pega direto do YouTube - instantâneo!)
-lang_options = {
-    "🇧🇷 Português": "pt", 
-    "🇺🇸 Inglês": "en", 
-    "🇪🇸 Espanhol": "es", 
-    "🇫🇷 Francês": "fr",
-    "🇩🇪 Alemão": "de",
-    "🇯🇵 Japonês": "ja",
-    "🇰🇷 Coreano": "ko",
-    "🇨🇳 Chinês": "zh"
-}
-selected_lang_name = st.selectbox("Idioma da transcrição:", list(lang_options.keys()))
-target_lang = lang_options[selected_lang_name]
-st.caption("💡 O YouTube gera legendas automáticas em vários idiomas - super rápido!")
-
-# Botão Transcrever
-if st.button("Transcrever Vídeo", use_container_width=True):
-    if not url:
+# Botão Principal
+if st.button("🚀 Transcrever Vídeo", use_container_width=True):
+    if not url or not video_id:
         st.warning("⚠️ Por favor, insira uma URL válida.")
-    elif not video_id:
-        st.warning("⚠️ URL do YouTube inválida. Verifique o link.")
     else:
         with st.status("Processando...", expanded=True) as status:
             try:
-                st.write("🔍 Conectando ao YouTube (Modo Seguro)...")
+                st.write("🔍 Conectando ao YouTube...")
                 
-                # Configurar Cookies
+                # Configurar Cookies se existirem
                 cookies_content = st.secrets.get("YOUTUBE_COOKIES", None)
                 cookie_file = "cookies.txt"
-                if cookies_content:
+                if cookies_content and not os.path.exists(cookie_file):
                     with open(cookie_file, "w") as f:
                         f.write(cookies_content)
                 
-                # Headers e Opções do yt-dlp
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Referer': 'https://www.youtube.com/',
-                }
-                
-                ydl_opts = {
-                    'skip_download': True,
-                    'writesubtitles': True,
-                    'writeautomaticsub': True,
-                    'quiet': True,
-                    'no_warnings': True,
-                    'cookiefile': cookie_file if os.path.exists(cookie_file) else None,
-                    'user_agent': headers['User-Agent'],
-                }
-
-                # Variáveis de controle
-                success = False
-                transcript_text = ""
-                full_transcript = []
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    subs = info.get('automatic_captions') or info.get('subtitles')
-                    
-                    if not subs:
-                        raise Exception("Nenhuma legenda encontrada para este vídeo.")
-                    
-                    # Buscar legenda no idioma escolhido pelo usuário
-                    target_sub_lang = None
-                    
-                    # 1. Tenta exato (ex: "pt" ou "en")
-                    if target_lang in subs:
-                        target_sub_lang = target_lang
-                    
-                    # 2. Tenta variações (pt-BR, en-US, etc)
-                    if not target_sub_lang:
-                        for code in subs.keys():
-                            if code.startswith(target_lang):
-                                target_sub_lang = code
-                                break
-                    
-                    # 3. Fallback: pega qualquer idioma disponível
-                    if not target_sub_lang:
-                        fallback_priority = ['pt', 'en', 'es', 'fr']
-                        for p in fallback_priority:
-                            for code in subs.keys():
-                                if code.startswith(p):
-                                    target_sub_lang = code
-                                    break
-                            if target_sub_lang:
-                                break
-                    
-                    if not target_sub_lang:
-                        target_sub_lang = list(subs.keys())[0]
-
-                    st.write(f"📝 Obtendo legendas (Base: {target_sub_lang})...")
-                    
-                    sub_tracks = subs[target_sub_lang]
-                    json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
-                    
-                    if not json3_track:
-                        # Tenta pegar qualquer formato se json3 falhar
-                        json3_track = sub_tracks[0]
-
-                    subtitle_url = json3_track['url']
-                    
-                    # Sempre buscamos a legenda original primeiro (mais estável)
-                    st.write(f"📝 Obtendo legendas originais: {target_sub_lang}...")
-                    subtitle_url = json3_track['url']
-
+                # Tenta baixar a legenda original (Método mais estável)
+                data = None
+                try:
+                    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=cookie_file if os.path.exists(cookie_file) else None)
+                    # Tenta qualquer idioma disponível, priorizando PT/EN
                     try:
-                        # TENTATIVA 1: Busca Direta (Original)
-                        r = requests.get(subtitle_url, headers=headers, timeout=10)
-                        if r.status_code != 200:
-                             raise Exception("FETCH_FAILED")
-                        data = r.json()
-                        
-                    except Exception as e:
-                        # FALLBACK COM YouTubeTranscriptApi
-                        try:
-                            st.write("📡 Conectando via canais alternativos...")
-                            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                            t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
-                            data_raw = t_obj.fetch()
-                            # Converter formato do YouTubeTranscriptApi para o nosso formato JSON3
-                            data = {'events': []}
-                            for entry in data_raw:
-                                data['events'].append({
-                                    'tStartMs': entry['start'] * 1000,
-                                    'segs': [{'utf8': entry['text']}]
-                                })
-                        except Exception as inner_e:
-                            raise Exception(f"Bloqueio total do YouTube (Erro 429). Tente novamente em instantes.")
+                        t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
+                    except:
+                        t_obj = next(iter(transcript_list))
+                    
+                    raw_data = t_obj.fetch()
+                    data = {'events': []}
+                    for entry in raw_data:
+                        data['events'].append({
+                            'tStartMs': entry['start'] * 1000,
+                            'segs': [{'utf8': entry['text']}]
+                        })
+                except Exception as e_api:
+                    st.write("⚠️ Método 1 falhou. Tentando backup...")
+                    # Fallback com yt-dlp
+                    ydl_opts = {'skip_download': True, 'quiet': True}
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        subs = info.get('automatic_captions') or info.get('subtitles')
+                        if subs:
+                            first_key = next(iter(subs.keys()))
+                            sub_url = next((t for t in subs[first_key] if t.get('ext') == 'json3'), subs[first_key][0])['url']
+                            r = requests.get(sub_url, timeout=10)
+                            if r.status_code == 200: data = r.json()
 
-                    # Processamento dos dados originais
-                    temp_full_text = []
-                    for event in data.get('events', []):
-                        if 'segs' not in event: continue
-                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                        if not text_seg: continue
+                if not data:
+                    raise Exception("Não foi possível obter nenhuma legenda para este vídeo.")
+
+                # Processamento do texto
+                st.write("📝 Organizando transcrição...")
+                full_transcript = []
+                temp_text = []
+                for event in data.get('events', []):
+                    if 'segs' not in event: continue
+                    text = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                    if text:
                         start = event.get('tStartMs', 0) / 1000.0
                         timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                        full_transcript.append({'timestamp': timestamp, 'text': text_seg, 'original': text_seg})
-                        temp_full_text.append(text_seg)
-                    
-                    transcript_text = " ".join(temp_full_text)
-
-                    # TRADUÇÃO EM LOTE (BATCH) - Muito mais rápido e evita 429 do Google
-                    if target_lang != target_sub_lang.split('-')[0] and target_lang != "original":
-                        st.write(f"🌐 Traduzindo para {selected_lang_name} (Lote)...")
-                        
-                        # 1. Traduzir o texto corrido (até 5000 chars por vez)
-                        translated_text = ""
-                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
-                            translated_text += translate_text(chunk, target_lang) + " "
-                        transcript_text = translated_text.strip()
-
-                        # 2. Traduzir os itens do timestamp em blocos para ser rápido
-                        # Agrupamos 30 linhas por vez para traduzir num único request
-                        batch_size = 30
-                        for i in range(0, len(full_transcript), batch_size):
-                            batch = full_transcript[i:i+batch_size]
-                            batch_texts = [item['text'] for item in batch]
-                            # Usamos um delimitador que o tradutor costuma ignorar ou manter
-                            combined = " ||| ".join(batch_texts)
-                            translated_combined = translate_text(combined, target_lang)
-                            translated_list = translated_combined.split("|||")
-                            
-                            for j, item in enumerate(batch):
-                                if j < len(translated_list):
-                                    item['text'] = translated_list[j].strip()
-                    
-                    success = True
-                status.update(label="Concluido!", state="complete", expanded=False)
-            
-            except Exception as e:
-                success = False
-                error_msg = str(e)
-                status.update(label="Erro no processamento", state="error", expanded=False)
+                        full_transcript.append({'timestamp': timestamp, 'text': text})
+                        temp_text.append(text)
                 
-        # Exibição dos Resultados ou Erros (FORA DO STATUS PARA SEMPRE APARECER)
-        if not success and 'error_msg' in locals():
-            st.error(f"❌ Ocorreu um erro: {error_msg}")
-            st.info("💡 Dica: Verifique se o vídeo tem legendas ou se o link está correto. Algumas lives podem demorar para gerar legendas.")
-            
-        if success:
-            st.success("Transcrição realizada com sucesso!")
-            st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
-            
-            import textwrap
-            
-            tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
-            
-            with tab1:
-                wrapped_text = textwrap.fill(transcript_text, width=80) 
-                st.code(wrapped_text, language="text")
-                st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
-            
-            with tab2:
-                timestamped_text = "\n".join([f"[{e['timestamp']}] {e['text']}" for e in full_transcript])
-                st.code(timestamped_text, language="text")
-                st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
+                transcript_text = " ".join(temp_text)
+                st.session_state['transcript_text'] = transcript_text
+                st.session_state['full_transcript'] = full_transcript
+                
+                status.update(label="Transcrição Concluída!", state="complete", expanded=False)
+                st.success("✅ Texto extraído com sucesso!")
 
-# Rodapé Profissional
+            except Exception as e:
+                st.error(f"❌ Erro: {str(e)}")
+                st.info("Dica: Verifique se o vídeo tem legendas disponíveis.")
+
+# Área de Resultados (se houver transcrição)
+if 'transcript_text' in st.session_state:
+    st.divider()
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        if st.button("✨ Gerar Resumo com IA", use_container_width=True, type="secondary"):
+            with st.spinner("🤖 Groq está analisando o vídeo..."):
+                resumo = resumir_transcricao(st.session_state['transcript_text'])
+                st.session_state['resumo_ia'] = resumo
+
+    # Exibição do Resumo
+    if 'resumo_ia' in st.session_state:
+        st.markdown("### 📝 Resumo Inteligente")
+        st.info(st.session_state['resumo_ia'])
+        st.download_button("📥 Baixar Resumo", st.session_state['resumo_ia'], "resumo_ia.txt")
+
+    # Tabs para Transcrição e Chat
+    st.write("---")
+    tab_chat, tab_txt, tab_ts = st.tabs(["💬 Chat com Vídeo", "📄 Texto Limpo", "🕒 Timestamps"])
+
+    with tab_chat:
+        st.markdown("### Pergunte algo sobre o vídeo")
+        st.caption("A IA usará a transcrição completa como contexto para responder.")
+        
+        # Inicializar histórico do chat se não existir
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        # Exibir mensagens anteriores
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # Input do usuário
+        if prompt := st.chat_input("Ex: Qual o ponto principal deste vídeo?"):
+            # Adicionar mensagem do usuário ao histórico
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Gerar resposta
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = ""
+                
+                try:
+                    # Contexto: Transcrição (limitada para caber no modelo)
+                    contexto = st.session_state['transcript_text'][:15000]
+                    
+                    messages = [
+                        {"role": "system", "content": f"Você é um assistente especialista que responde perguntas baseadas na transcrição de um vídeo. Use o contexto abaixo para responder de forma precisa e direta em Português do Brasil.\n\nCONTEÚDO DO VÍDEO:\n{contexto}"},
+                    ]
+                    
+                    # Adicionar histórico da conversa (últimas 5 mensagens para manter contexto)
+                    for m in st.session_state.messages[-5:]:
+                        messages.append({"role": m["role"], "content": m["content"]})
+
+                    response = client.chat.completions.create(
+                        model="llama3-8b-8192",
+                        messages=messages,
+                        temperature=0.7,
+                        stream=True
+                    )
+
+                    for chunk in response:
+                        if chunk.choices[0].delta.content:
+                            full_response += chunk.choices[0].delta.content
+                            message_placeholder.markdown(full_response + "▌")
+                    
+                    message_placeholder.markdown(full_response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                    
+                except Exception as e:
+                    st.error(f"Erro no chat: {str(e)}")
+
+    with tab_txt:
+        st.code(st.session_state['transcript_text'], language="text")
+        st.download_button("Baixar Texto", st.session_state['transcript_text'], "transcricao.txt")
+        
+    with tab_ts:
+        ts_text = "\n".join([f"[{e['timestamp']}] {e['text']}" for e in st.session_state['full_transcript']])
+        st.code(ts_text, language="text")
+        st.download_button("Baixar com Tempo", ts_text, "transcricao_timestamps.txt")
+
+# Rodapé
 st.markdown("""
-<br><br><br>
+<br><br>
 <div style='text-align: center; color: #666; font-size: 12px; padding: 20px; border-top: 1px solid #2d2d30;'>
-    <p>© 2026 <b>Alerial</b>. Todos os direitos reservados.</p>
-    <p>
-        <a href='#' style='color: #888; text-decoration: none;'>Termos de Uso (EULA)</a> | 
-        <a href='#' style='color: #888; text-decoration: none;'>Política de Privacidade</a> | 
-        <a href='#' style='color: #888; text-decoration: none;'>Suporte</a>
-    </p>
-    <p style='margin-top: 10px; font-style: italic;'>Desenvolvido para facilitar seus estudos e pesquisas.</p>
+    <p>© 2026 <b>Alerial</b> - Inteligência em Transcrição</p>
 </div>
 """, unsafe_allow_html=True)
