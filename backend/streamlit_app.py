@@ -15,11 +15,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Groq Client Setup
-client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=st.secrets.get("GROQ_API_KEY")
-)
+# Groq Client Setup - Protegido contra erro de inicialização
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
+
+def get_groq_client():
+    if not GROQ_API_KEY:
+        st.error("🔑 **Chave API da Groq não encontrada!** Por favor, configure `GROQ_API_KEY` nos Secrets do Streamlit.")
+        st.info("💡 Como configurar: Vá em Settings -> Secrets no painel do Streamlit Cloud.")
+        return None
+    return OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY
+    )
 
 # Estilização Customizada (CSS)
 st.markdown("""
@@ -88,22 +95,18 @@ def extract_video_id(url):
 
 def resumir_transcricao(texto_completo):
     """Gera um resumo estruturado usando Groq (Llama 3)"""
-    # Limite seguro de caracteres para o contexto
+    client = get_groq_client()
+    if not client:
+        return "Erro: Chave API não configurada corretamente."
+
+    # Limite seguro de caracteres
     texto_para_resumir = texto_completo[:15000]
     
     prompt = f"""
-    Atue como um assistente especialista em análise de conteúdo de vídeo.
-    Sua tarefa é criar um resumo executivo, estruturado e altamente informativo do texto abaixo.
-    
-    A estrutura deve seguir este padrão:
-    1. 📌 **Visão Geral**: Um parágrafo curto resumindo o tema principal.
-    2. 🔑 **Pontos Chave**: Lista com os momentos e ideias mais importantes.
-    3. 💡 **Conclusão/Insight**: Qual a principal lição ou mensagem final do vídeo.
-    
-    Regras:
-    - Responda SEMPRE em Português do Brasil.
-    - Use Markdown para formatação.
-    - Seja direto, mas mantenha a profundidade das informações.
+    Atue como um assistente especialista em resumir vídeos do YouTube.
+    Faça um resumo estruturado e profissional do texto abaixo.
+    Use tópicos (bullet points) claros e destaque as conclusões principais.
+    Responda SEMPRE em Português do Brasil.
     
     Texto do vídeo:
     {texto_para_resumir}
@@ -226,70 +229,16 @@ if 'transcript_text' in st.session_state:
         st.info(st.session_state['resumo_ia'])
         st.download_button("📥 Baixar Resumo", st.session_state['resumo_ia'], "resumo_ia.txt")
 
-    # Tabs para Transcrição e Chat
+    # Tabs para Transcrição
     st.write("---")
-    tab_chat, tab_txt, tab_ts = st.tabs(["💬 Chat com Vídeo", "📄 Texto Limpo", "🕒 Timestamps"])
-
-    with tab_chat:
-        st.markdown("### Pergunte algo sobre o vídeo")
-        st.caption("A IA usará a transcrição completa como contexto para responder.")
-        
-        # Inicializar histórico do chat se não existir
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-
-        # Exibir mensagens anteriores
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Input do usuário
-        if prompt := st.chat_input("Ex: Qual o ponto principal deste vídeo?"):
-            # Adicionar mensagem do usuário ao histórico
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            # Gerar resposta
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-                
-                try:
-                    # Contexto: Transcrição (limitada para caber no modelo)
-                    contexto = st.session_state['transcript_text'][:15000]
-                    
-                    messages = [
-                        {"role": "system", "content": f"Você é um assistente especialista que responde perguntas baseadas na transcrição de um vídeo. Use o contexto abaixo para responder de forma precisa e direta em Português do Brasil.\n\nCONTEÚDO DO VÍDEO:\n{contexto}"},
-                    ]
-                    
-                    # Adicionar histórico da conversa (últimas 5 mensagens para manter contexto)
-                    for m in st.session_state.messages[-5:]:
-                        messages.append({"role": m["role"], "content": m["content"]})
-
-                    response = client.chat.completions.create(
-                        model="llama3-8b-8192",
-                        messages=messages,
-                        temperature=0.7,
-                        stream=True
-                    )
-
-                    for chunk in response:
-                        if chunk.choices[0].delta.content:
-                            full_response += chunk.choices[0].delta.content
-                            message_placeholder.markdown(full_response + "▌")
-                    
-                    message_placeholder.markdown(full_response)
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-                    
-                except Exception as e:
-                    st.error(f"Erro no chat: {str(e)}")
-
-    with tab_txt:
+    st.markdown("### 📄 Transcrição Completa")
+    tab1, tab2 = st.tabs(["Texto Limpo", "Com Timestamps"])
+    
+    with tab1:
         st.code(st.session_state['transcript_text'], language="text")
         st.download_button("Baixar Texto", st.session_state['transcript_text'], "transcricao.txt")
         
-    with tab_ts:
+    with tab2:
         ts_text = "\n".join([f"[{e['timestamp']}] {e['text']}" for e in st.session_state['full_transcript']])
         st.code(ts_text, language="text")
         st.download_button("Baixar com Tempo", ts_text, "transcricao_timestamps.txt")
