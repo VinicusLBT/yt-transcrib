@@ -103,15 +103,12 @@ def translate_text(text, target_lang):
         url = "https://translate.googleapis.com/translate_a/single"
         params = {
             'client': 'gtx',
-            'sl': 'auto',
+            'sl': 'auto',  # auto-detect source
             'tl': target_lang,
             'dt': 't',
-            'q': text[:5000]
+            'q': text[:5000]  # Limite seguro
         }
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response = requests.get(url, params=params, timeout=10)
         if response.ok:
             result = response.json()
             # Extrair texto traduzido do resultado
@@ -204,133 +201,120 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                 success = False
                 transcript_text = ""
                 full_transcript = []
-                data = None
-                source_lang = None
 
-                # MÉTODO 1: YouTubeTranscriptApi (MAIS ESTÁVEL EM CLOUD)
-                st.write("📡 Conectando ao YouTube...")
-                try:
-                    transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    subs = info.get('automatic_captions') or info.get('subtitles')
                     
-                    # Tenta pegar legenda gerada automaticamente
+                    if not subs:
+                        raise Exception("Nenhuma legenda encontrada para este vídeo.")
+                    
+                    # Buscar legenda no idioma escolhido pelo usuário
+                    target_sub_lang = None
+                    
+                    # 1. Tenta exato (ex: "pt" ou "en")
+                    if target_lang in subs:
+                        target_sub_lang = target_lang
+                    
+                    # 2. Tenta variações (pt-BR, en-US, etc)
+                    if not target_sub_lang:
+                        for code in subs.keys():
+                            if code.startswith(target_lang):
+                                target_sub_lang = code
+                                break
+                    
+                    # 3. Fallback: pega qualquer idioma disponível
+                    if not target_sub_lang:
+                        fallback_priority = ['pt', 'en', 'es', 'fr']
+                        for p in fallback_priority:
+                            for code in subs.keys():
+                                if code.startswith(p):
+                                    target_sub_lang = code
+                                    break
+                            if target_sub_lang:
+                                break
+                    
+                    if not target_sub_lang:
+                        target_sub_lang = list(subs.keys())[0]
+
+                    st.write(f"📝 Obtendo legendas (Base: {target_sub_lang})...")
+                    
+                    sub_tracks = subs[target_sub_lang]
+                    json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), None)
+                    
+                    if not json3_track:
+                        # Tenta pegar qualquer formato se json3 falhar
+                        json3_track = sub_tracks[0]
+
+                    subtitle_url = json3_track['url']
+                    
+                    # Sempre buscamos a legenda original primeiro (mais estável)
+                    st.write(f"📝 Obtendo legendas originais: {target_sub_lang}...")
+                    subtitle_url = json3_track['url']
+
                     try:
-                        t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh'])
-                    except:
-                        # Se não achar gerada, tenta manual
+                        # TENTATIVA 1: Busca Direta (Original)
+                        r = requests.get(subtitle_url, headers=headers, timeout=10)
+                        if r.status_code != 200:
+                             raise Exception("FETCH_FAILED")
+                        data = r.json()
+                        
+                    except Exception as e:
+                        # FALLBACK COM YouTubeTranscriptApi
                         try:
-                            t_obj = transcript_list.find_manually_created_transcript(['pt', 'en', 'es', 'fr', 'de', 'ja', 'ko', 'zh'])
-                        except:
-                            # Pega a primeira disponível
-                            available = list(transcript_list)
-                            if available:
-                                t_obj = available[0]
-                            else:
-                                raise Exception("Nenhuma legenda encontrada")
+                            st.write("📡 Conectando via canais alternativos...")
+                            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                            t_obj = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr'])
+                            data_raw = t_obj.fetch()
+                            # Converter formato do YouTubeTranscriptApi para o nosso formato JSON3
+                            data = {'events': []}
+                            for entry in data_raw:
+                                data['events'].append({
+                                    'tStartMs': entry['start'] * 1000,
+                                    'segs': [{'utf8': entry['text']}]
+                                })
+                        except Exception as inner_e:
+                            raise Exception(f"Bloqueio total do YouTube (Erro 429). Tente novamente em instantes.")
+
+                    # Processamento dos dados originais
+                    temp_full_text = []
+                    for event in data.get('events', []):
+                        if 'segs' not in event: continue
+                        text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
+                        if not text_seg: continue
+                        start = event.get('tStartMs', 0) / 1000.0
+                        timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
+                        full_transcript.append({'timestamp': timestamp, 'text': text_seg, 'original': text_seg})
+                        temp_full_text.append(text_seg)
                     
-                    source_lang = t_obj.language_code
-                    st.write(f"✅ Legendas obtidas (Idioma base: {source_lang})")
-                    
-                    data_raw = t_obj.fetch()
-                    data = {'events': []}
-                    for entry in data_raw:
-                        data['events'].append({
-                            'tStartMs': entry['start'] * 1000,
-                            'segs': [{'utf8': entry['text']}]
-                        })
+                    transcript_text = " ".join(temp_full_text)
+
+                    # TRADUÇÃO EM LOTE (BATCH) - Muito mais rápido e evita 429 do Google
+                    if target_lang != target_sub_lang.split('-')[0] and target_lang != "original":
+                        st.write(f"🌐 Traduzindo para {selected_lang_name} (Lote)...")
                         
-                except Exception as e1:
-                    st.write("⚠️ Método 1 falhou. Tentando método alternativo...")
-                    
-                    # MÉTODO 2: yt-dlp + requests (FALLBACK)
-                    try:
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            info = ydl.extract_info(url, download=False)
-                            subs = info.get('automatic_captions') or info.get('subtitles')
-                            
-                            if not subs:
-                                raise Exception("Nenhuma legenda encontrada para este vídeo.")
-                            
-                            # Pega qualquer idioma disponível
-                            source_lang = list(subs.keys())[0]
-                            for preferred in ['pt', 'en', 'es', 'fr']:
-                                for code in subs.keys():
-                                    if code.startswith(preferred):
-                                        source_lang = code
-                                        break
-                            
-                            sub_tracks = subs[source_lang]
-                            json3_track = next((t for t in sub_tracks if t.get('ext') == 'json3'), sub_tracks[0])
-                            
-                            r = requests.get(json3_track['url'], headers=headers, timeout=10)
-                            if r.status_code == 200:
-                                data = r.json()
-                                st.write(f"✅ Legendas obtidas via método alternativo ({source_lang})")
-                            else:
-                                raise Exception("FETCH_FAILED")
-                    except Exception as e2:
-                        raise Exception(f"Não foi possível obter legendas. Verifique se o vídeo possui legendas disponíveis.")
+                        # 1. Traduzir o texto corrido (até 5000 chars por vez)
+                        translated_text = ""
+                        for chunk in [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]:
+                            translated_text += translate_text(chunk, target_lang) + " "
+                        transcript_text = translated_text.strip()
 
-                if not data:
-                    raise Exception("Nenhuma legenda encontrada para este vídeo.")
-
-                # Processamento dos dados originais
-                temp_full_text = []
-                for event in data.get('events', []):
-                    if 'segs' not in event: continue
-                    text_seg = "".join([s.get('utf8', '') for s in event['segs']]).strip()
-                    if not text_seg: continue
-                    start = event.get('tStartMs', 0) / 1000.0
-                    timestamp = time.strftime('%H:%M:%S', time.gmtime(start))
-                    full_transcript.append({'timestamp': timestamp, 'text': text_seg, 'original': text_seg})
-                    temp_full_text.append(text_seg)
-                
-                transcript_text = " ".join(temp_full_text)
-
-                # TRADUÇÃO EM LOTE COM BARRA DE PROGRESSO
-                # Traduz se idioma de destino for diferente do idioma base obtido
-                needs_translation = source_lang and not source_lang.startswith(target_lang) and target_lang != "original"
-                
-                if needs_translation:
-                    # Barra de progresso visível
-                    progress_bar = st.progress(0, text="🎨 Iniciando tradução...")
+                        # 2. Traduzir os itens do timestamp em blocos para ser rápido
+                        # Agrupamos 30 linhas por vez para traduzir num único request
+                        batch_size = 30
+                        for i in range(0, len(full_transcript), batch_size):
+                            batch = full_transcript[i:i+batch_size]
+                            batch_texts = [item['text'] for item in batch]
+                            # Usamos um delimitador que o tradutor costuma ignorar ou manter
+                            combined = " ||| ".join(batch_texts)
+                            translated_combined = translate_text(combined, target_lang)
+                            translated_list = translated_combined.split("|||")
+                            
+                            for j, item in enumerate(batch):
+                                if j < len(translated_list):
+                                    item['text'] = translated_list[j].strip()
                     
-                    # 1. Traduzir o texto corrido (até 5000 chars por vez)
-                    chunks = [transcript_text[i:i+4500] for i in range(0, len(transcript_text), 4500)]
-                    batch_size = 30
-                    timestamp_batches = (len(full_transcript) + batch_size - 1) // batch_size
-                    total_steps = len(chunks) + timestamp_batches
-                    current_step = 0
-                    
-                    translated_text = ""
-                    for i, chunk in enumerate(chunks):
-                        current_step += 1
-                        pct = int((current_step / total_steps) * 100)
-                        progress_bar.progress(pct, text=f"✍️ Traduzindo texto principal... {pct}%")
-                        translated_text += translate_text(chunk, target_lang) + " "
-                    transcript_text = translated_text.strip()
-
-                    # 2. Traduzir os itens do timestamp em blocos
-                    for i in range(0, len(full_transcript), batch_size):
-                        current_step += 1
-                        pct = int((current_step / total_steps) * 100)
-                        progress_bar.progress(pct, text=f"⏱️ Traduzindo timestamps... {pct}%")
-                        
-                        batch = full_transcript[i:i+batch_size]
-                        batch_texts = [item['text'] for item in batch]
-                        combined = " ||| ".join(batch_texts)
-                        translated_combined = translate_text(combined, target_lang)
-                        translated_list = translated_combined.split("|||")
-                        
-                        for j, item in enumerate(batch):
-                            if j < len(translated_list):
-                                item['text'] = translated_list[j].strip()
-                    
-                    # Finalizar barra
-                    progress_bar.progress(100, text="✅ Tradução concluída!")
-                    time.sleep(1)
-                    progress_bar.empty()
-                
-                success = True
+                    success = True
                 status.update(label="Concluido!", state="complete", expanded=False)
             
             except Exception as e:
