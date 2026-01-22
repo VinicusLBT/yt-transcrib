@@ -95,8 +95,8 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                     'user_agent': headers['User-Agent'],
                 }
 
-                # Extração
-                st.write("📥 Baixando legendas...")
+                # Variáveis de controle
+                success = False
                 transcript_text = ""
                 full_transcript = []
 
@@ -153,33 +153,36 @@ if st.button("Transcrever Vídeo", use_container_width=True):
                         
                         full_transcript.append(f"[{timestamp}] {text_seg}")
                         transcript_text += text_seg + " "
+                    
+                    success = True
 
                 status.update(label="Concluído!", state="complete", expanded=False)
-                
-                # Exibição dos Resultados
-                st.success("Transcrição realizada com sucesso!")
-                st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
-                
-                import textwrap
-                
-                tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
-                
-                with tab1:
-                    # Usando st.code para ter o botão de copiar nativo
-                    # Truque: Quebrar o texto manualmente para simular word-wrap no st.code
-                    wrapped_text = textwrap.fill(transcript_text, width=80) 
-                    st.code(wrapped_text, language="text")
-                    st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
-                
-                with tab2:
-                    timestamped_text = "\n".join(full_transcript)
-                    st.code(timestamped_text, language="text")
-                    st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
-
+            
             except Exception as e:
                 status.update(label="Erro", state="error", expanded=False)
                 st.error(f"Ocorreu um erro: {str(e)}")
                 st.info("Dica: Verifique se o vídeo tem legendas ou permissões.")
+        
+        # Exibição dos Resultados (FORA DO STATUS PARA APARECER AUTOMATICAMENTE)
+        if success:
+            st.success("Transcrição realizada com sucesso!")
+            st.caption("Dica: Use o botão de copiar 📄 no canto superior direito do texto.")
+            
+            import textwrap
+            
+            tab1, tab2 = st.tabs(["📄 Texto Corrido (Limpo)", "⏱️ Com Timestamps"])
+            
+            with tab1:
+                # Usando st.code para ter o botão de copiar nativo
+                # Truque: Quebrar o texto manualmente para simular word-wrap no st.code
+                wrapped_text = textwrap.fill(transcript_text, width=80) 
+                st.code(wrapped_text, language="text")
+                st.download_button("Baixar Texto (.txt)", data=transcript_text, file_name="transcricao_alerial.txt", use_container_width=True)
+            
+            with tab2:
+                timestamped_text = "\n".join(full_transcript)
+                st.code(timestamped_text, language="text")
+                st.download_button("Baixar com Tempo (.txt)", data=timestamped_text, file_name="transcricao_tempo_alerial.txt", use_container_width=True)
 
 # Rodapé Profissional
 st.markdown("""
