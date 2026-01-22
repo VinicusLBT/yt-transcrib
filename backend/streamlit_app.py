@@ -5,6 +5,7 @@ import os
 import time
 import re
 import textwrap
+import youtube_transcript_api
 from youtube_transcript_api import YouTubeTranscriptApi
 from deep_translator import GoogleTranslator
 
@@ -85,22 +86,28 @@ def fetch_original_transcript(video_id):
         if cookies_content and not os.path.exists(cookie_file):
             with open(cookie_file, "w") as f: f.write(cookies_content)
             
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=cookie_file if os.path.exists(cookie_file) else None)
+        c_path = cookie_file if os.path.exists(cookie_file) else None
         
-        # Tenta manual (Humana), senão gerada automaticamente
-        try:
-            transcript = transcript_list.find_manually_created_transcript(['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'zh'])
-        except:
-            transcript = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'zh'])
-            
-        return transcript.fetch(), transcript.language_code
-    except Exception as e:
-        # Se falhar as preferidas, tenta pegar a primeira disponível
-        try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = next(iter(transcript_list))
+        # Tenta usar o método moderno se disponível
+        if hasattr(YouTubeTranscriptApi, 'list_transcripts'):
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, cookies=c_path)
+            # Tenta manual (Humana), senão gerada automaticamente
+            try:
+                transcript = transcript_list.find_manually_created_transcript(['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'zh'])
+            except:
+                transcript = transcript_list.find_generated_transcript(['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'zh'])
             return transcript.fetch(), transcript.language_code
-        except:
+        else:
+            # Fallback para método antigo/simples
+            data = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en', 'es', 'fr'], cookies=c_path)
+            return data, "auto"
+            
+    except Exception as e:
+        # Tenta o método mais básico possível sem filtros se tudo falhar
+        try:
+            data = YouTubeTranscriptApi.get_transcript(video_id)
+            return data, "auto"
+        except Exception as e2:
             return None, str(e)
 
 def translate_internally(texto_completo, target_lang):
