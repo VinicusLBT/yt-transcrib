@@ -1,0 +1,21 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Frontend build artifacts
+node_modules/
+.next/
+out/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+backend/.streamlit/
+backend/cookies.txt
+
+# Operating-system files
+.DS_Store
+Thumbs.db
